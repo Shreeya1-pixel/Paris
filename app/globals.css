@@ -2,26 +2,279 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Openworld reference UI (light glass + map chrome) ───────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ow-charcoal: #27272a;
+  --ow-charcoal-deep: #18181b;
+  --ow-silver: #e4e4e7;
+  --ow-silver-mid: #d4d4d8;
+  --ow-text: #18181b;
+  --ow-text-muted: #71717a;
+  --ow-text-soft: #a1a1aa;
+  --ow-white: #ffffff;
+  --ow-glass: rgba(255, 255, 255, 0.42);
+  --ow-glass-strong: rgba(255, 255, 255, 0.72);
+  --ow-glass-border: rgba(255, 255, 255, 0.55);
+  --ow-blur: blur(20px);
+  --ow-shadow-soft: 0 8px 32px rgba(15, 23, 42, 0.08);
+  --ow-shadow-pill: 0 2px 12px rgba(0, 0, 0, 0.06);
+
+  /* Mesh gradient stops */
+  --ow-mesh-1: #e0e7ff;
+  --ow-mesh-2: #fce7f3;
+  --ow-mesh-3: #ddd6fe;
+  --ow-mesh-4: #fef3c7;
+
+  /* Legacy / Paris tokens remapped for compatibility */
+  --bg-base: #f4f4f5;
+  --bg-surface: rgba(255, 255, 255, 0.65);
+  --bg-glass: rgba(255, 255, 255, 0.45);
+  --bg-glass-border: rgba(255, 255, 255, 0.5);
+  --bg-glass-hover: rgba(255, 255, 255, 0.6);
+  --accent-gold: var(--ow-charcoal);
+  --accent-gold-light: #3f3f46;
+  --accent-cream: #fafafa;
+  --accent-red: #ef4444;
+  --text-primary: var(--ow-text);
+  --text-secondary: var(--ow-text-muted);
+  --text-muted: var(--ow-text-soft);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --shadow-card: var(--ow-shadow-soft);
+  --shadow-glass: var(--ow-shadow-soft);
+  --radius-card: 24px;
+  --radius-pill: 100px;
+  --radius-sm: 14px;
+  --blur-glass: blur(20px);
+
+  --bg-primary: var(--bg-base);
+  --bg-card: var(--bg-surface);
+  --bg-elevated: rgba(255, 255, 255, 0.85);
+  --accent: var(--ow-charcoal);
+  --accent-amber: #f59e0b;
+  --border: var(--border-subtle);
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  font-family: var(--font-geist, "Inter"), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+/* App-wide soft mesh (Discover, Create, nav screens) */
+.ow-app-bg {
+  background-color: #f4f4f5;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, var(--ow-mesh-1), transparent),
+    radial-gradient(ellipse 60% 40% at 90% 10%, var(--ow-mesh-2), transparent),
+    radial-gradient(ellipse 50% 30% at 50% 100%, var(--ow-mesh-3), transparent),
+    radial-gradient(ellipse 40% 25% at 0% 80%, var(--ow-mesh-4), transparent);
+  background-attachment: fixed;
+}
+
+/* Frosted panel (create form card) */
+.ow-glass-panel {
+  background: rgba(255, 255, 255, 0.38);
+  backdrop-filter: var(--ow-blur);
+  -webkit-backdrop-filter: var(--ow-blur);
+  border: 1px solid var(--ow-glass-border);
+  border-radius: 28px;
+  box-shadow: var(--ow-shadow-soft);
+}
+
+.ow-glass-input {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: var(--radius-sm);
+  color: var(--ow-text);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ow-glass-input::placeholder {
+  color: var(--ow-text-soft);
+}
+.ow-glass-input:focus {
+  border-color: rgba(24, 24, 27, 0.25);
+  box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.06);
+}
+
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-glass);
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.glass-card:hover {
+  background: var(--bg-glass-hover);
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+  outline: none;
+}
+.glass-input::placeholder {
+  color: var(--text-muted);
+}
+.glass-input:focus {
+  border-color: rgba(24, 24, 27, 0.2);
+  box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.06);
+}
+
+.noise-overlay::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.02;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px;
+  z-index: 9999;
+}
+
+.font-display,
+.heading {
+  font-family: var(--font-cormorant, "Cormorant Garamond"), Georgia, serif;
+}
+.body {
+  font-family: var(--font-geist, "Inter"), system-ui, sans-serif;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .pb-nav {
+    padding-bottom: 88px;
+  }
+
+  .text-gold {
+    color: var(--accent-gold);
+  }
+  .text-gold-light {
+    color: var(--accent-gold-light);
+  }
+  .text-cream {
+    color: var(--accent-cream);
+  }
+
+  .border-glass {
+    border-color: var(--bg-glass-border);
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.04) 25%,
+      rgba(0, 0, 0, 0.08) 50%,
+      rgba(0, 0, 0, 0.04) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+}
+
+[data-stagger] > * {
+  opacity: 0;
+  animation: fadeSlideUp 0.3s ease forwards;
+}
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+[data-stagger] > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+[data-stagger] > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+[data-stagger] > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+[data-stagger] > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+[data-stagger] > *:nth-child(5) {
+  animation-delay: 200ms;
+}
+[data-stagger] > *:nth-child(6) {
+  animation-delay: 250ms;
+}
+[data-stagger] > *:nth-child(n + 7) {
+  animation-delay: 300ms;
+}
+
+/* Mapbox GL — glass-style place popups */
+.map-place-popup-root .mapboxgl-popup-content {
+  padding: 0;
+  background: transparent;
+  border-radius: 1rem;
+  box-shadow: none;
+}
+.map-place-popup-root .mapboxgl-popup-tip {
+  border-top-color: rgba(24, 24, 27, 0.92);
+}
+.map-place-popup-root .mapboxgl-popup-close-button {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 18px;
+  padding: 4px 8px;
+  right: 2px;
+  top: 2px;
+}
+.map-place-popup-root .mapboxgl-popup-close-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
 }
