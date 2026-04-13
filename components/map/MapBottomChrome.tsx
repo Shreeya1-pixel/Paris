@@ -13,6 +13,8 @@ const PLACE_FILTERS: { id: NearbyPlaceFilter; label: string; emoji: string }[] =
   { id: "restaurant", label: "Restaurant", emoji: "🍽️" },
   { id: "bar", label: "Bar", emoji: "🍷" },
   { id: "boulangerie", label: "Bakery", emoji: "🥐" },
+  { id: "park", label: "Park", emoji: "🌳" },
+  { id: "library", label: "Library", emoji: "📖" },
 ];
 
 type Chip = {
@@ -68,7 +70,8 @@ export function MapBottomChrome({
   };
 
   return (
-    <div className="fixed left-0 right-0 bottom-0 z-40 pb-safe pointer-events-none">
+    <div className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none"
+      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       <div className="pointer-events-auto px-3 pb-2 space-y-2">
         <AnimatePresence>
           {chipsVisible && (

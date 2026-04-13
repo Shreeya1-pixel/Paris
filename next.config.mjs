@@ -7,6 +7,9 @@ const nextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "api.mapbox.com", pathname: "/**" },
       { protocol: "https", hostname: "*.supabase.co", pathname: "/**" },
+      { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
+      { protocol: "https", hostname: "fastly.picsum.photos", pathname: "/**" },
+      { protocol: "https", hostname: "picsum.photos", pathname: "/**" },
     ],
   },
 };

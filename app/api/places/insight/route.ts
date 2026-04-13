@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getGeminiApiKey } from "@/lib/geminiEnv";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 20;
 
 type InsightBody = {
   name?: string;
@@ -11,7 +13,7 @@ type InsightBody = {
 };
 
 async function callGeminiInsight(body: InsightBody): Promise<{ tagline: string; quote: string }> {
-  const key = process.env.GEMINI_API_KEY;
+  const key = getGeminiApiKey();
   if (!key) throw new Error("GEMINI_API_KEY not set");
 
   const system = `You are a concise Paris food & culture guide. Reply with ONLY valid JSON, no markdown:

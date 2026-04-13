@@ -119,7 +119,7 @@ export default function ProfilePage() {
         <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[400px] h-[400px] rounded-full bg-violet-300/30 blur-[100px]" />
       </div>
 
-      <header className="px-5 pt-12 pb-6">
+      <header className="px-5 pt-safe-top pb-6">
         <h1 className="font-display text-3xl font-semibold text-zinc-900">{t("profile.title")}</h1>
       </header>
 

@@ -21,7 +21,7 @@ export function MapTopChrome({
 
   return (
     <>
-      <header className="absolute top-0 left-0 right-0 z-20 flex items-start justify-between px-4 pt-12 pb-2 pointer-events-none gap-2">
+      <header className="absolute top-0 left-0 right-0 z-20 flex items-start justify-between px-4 pt-safe-top pb-2 pointer-events-none gap-2">
         <button
           type="button"
           onClick={() => setMenuOpen(!menuOpen)}
@@ -48,7 +48,9 @@ export function MapTopChrome({
         </div>
       </header>
 
-      <div className="absolute right-4 z-30 flex flex-col gap-2 pointer-events-none bottom-[100px]">
+      {/* Floating action buttons — z-[45] keeps them above the AI panel (z-35) and chrome (z-40) */}
+      <div className="absolute right-4 z-[45] flex flex-col gap-2 pointer-events-none"
+        style={{ bottom: "calc(144px + env(safe-area-inset-bottom, 0px))" }}>
         <motion.button
           type="button"
           whileTap={{ scale: 0.94 }}

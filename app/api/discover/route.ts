@@ -95,10 +95,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: gemRes.error.message }, { status: 500 });
   }
 
-  const rawEvents = (evRes.data ?? []) as Event[];
+  let rawEvents = (evRes.data ?? []) as Event[];
+
+  // If no events found near the user, fall back to all active UPCOMING events globally.
+  // This surfaces user-created events even when the viewer is outside the event's city.
+  if (rawEvents.length === 0) {
+    const { data: globalEv } = await supabase
+      .from("events")
+      .select("*")
+      .eq("status", "active")
+      .gt("start_time", nowIso)
+      .order("start_time", { ascending: true })
+      .limit(MAX_EVENTS);
+    rawEvents = (globalEv ?? []) as Event[];
+  }
+
   const eventsInRadius = rawEvents
     .map((e) => ({ e, d: haversineKm(lat, lng, e.lat, e.lng) }))
-    .filter((x) => x.d <= RADIUS_KM)
     .map(({ e, d }) => ({ ...e, distance_km: d }));
 
   const now = Date.now();
@@ -114,22 +127,21 @@ export async function GET(req: NextRequest) {
 
   const happeningIds = new Set(happeningNow.map((e) => e.id));
 
-  /** All upcoming events in radius (next 30 days), soonest first — includes user-created listings */
+  /** All upcoming events, soonest first — includes user-created listings anywhere. */
   const upcoming = [...eventsInRadius]
     .filter((e) => {
       const t = new Date(e.start_time).getTime();
-      return t >= now && t <= now + 30 * 24 * 60 * 60 * 1000;
+      return t >= now && !happeningIds.has(e.id);
     })
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-    .filter((e) => !happeningIds.has(e.id))
-    .slice(0, 20);
+    .slice(0, 30);
 
   const thisWeekend = eventsInRadius
     .filter((e) => isWeekendLocal(e.start_time) && withinNextDays(e.start_time, 14))
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 12);
 
-  const forYou = sortFeedPriority(eventsInRadius, lat, lng).slice(0, 8);
+  const forYou = sortFeedPriority(eventsInRadius, lat, lng).slice(0, 20);
 
   const cafeRows = (cafeRes.data ?? []) as Place[];
   const cafesSorted = cafeRows
@@ -170,9 +182,9 @@ export async function GET(req: NextRequest) {
   );
 
   const nearYou: (Event | Place)[] = [
-    ...nearestEvents.slice(0, 6),
-    ...nearestPlaces.slice(0, 4),
-  ].slice(0, 10);
+    ...nearestEvents.slice(0, 10),
+    ...nearestPlaces.slice(0, 6),
+  ].slice(0, 16);
 
   return NextResponse.json({
     happeningNow,

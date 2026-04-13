@@ -2,13 +2,15 @@
 
 import { cn } from "@/lib/utils";
 
-export type NearbyPlaceFilter = "cafe" | "restaurant" | "bar" | "boulangerie";
+export type NearbyPlaceFilter = "cafe" | "restaurant" | "bar" | "boulangerie" | "park" | "library";
 
 const FILTERS: { id: NearbyPlaceFilter; label: string; emoji: string }[] = [
   { id: "cafe", label: "Café", emoji: "☕" },
   { id: "restaurant", label: "Restaurant", emoji: "🍽️" },
   { id: "bar", label: "Bar", emoji: "🍷" },
   { id: "boulangerie", label: "Bakery", emoji: "🥐" },
+  { id: "park", label: "Park", emoji: "🌳" },
+  { id: "library", label: "Library", emoji: "📖" },
 ];
 
 interface MapPlaceFilterBarProps {

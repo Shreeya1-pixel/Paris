@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, Inter } from "next/font/google";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { AbortErrorSuppressor } from "@/components/AbortErrorSuppressor";
 import "./globals.css";
 
 const cormorant = Cormorant_Garamond({
@@ -17,6 +18,15 @@ const geist = Inter({
   variable: "--font-geist",
   display: "swap",
 });
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#0d0d12",
+};
 
 export const metadata: Metadata = {
   title: "Openworld Paris — Discover the City Like a Local",
@@ -35,6 +45,7 @@ export default function RootLayout({
       <body
         className={`${cormorant.variable} ${geist.variable} font-sans antialiased min-h-dvh text-[var(--text-primary)]`}
       >
+        <AbortErrorSuppressor />
         <QueryProvider>
           <LanguageProvider>
             {children}

@@ -19,7 +19,8 @@ export function BottomNav() {
   const { t } = useLanguage();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/75 backdrop-blur-xl border-t border-zinc-200/80 shadow-[0_-4px_24px_rgba(0,0,0,0.04)] pb-safe">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white/75 backdrop-blur-xl border-t border-zinc-200/80 shadow-[0_-4px_24px_rgba(0,0,0,0.04)]"
+      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       <div className="flex items-center justify-around h-[72px] max-w-lg mx-auto px-2">
         {navKeys.map(({ href, icon: Icon, labelKey, isCreate }) => {
           const label = t(labelKey);

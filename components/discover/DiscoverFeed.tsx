@@ -110,7 +110,7 @@ export function DiscoverFeed({
 
   return (
     <div className="min-h-dvh pb-nav ow-app-bg">
-      <header className="sticky top-0 z-20 flex items-center justify-between px-5 py-4 bg-white/70 backdrop-blur-xl border-b border-zinc-200/60">
+      <header className="sticky top-0 z-20 flex items-center justify-between px-5 pb-4 pt-safe-base bg-white/70 backdrop-blur-xl border-b border-zinc-200/60">
         <div>
           <h1 className="font-display text-3xl font-semibold text-zinc-900">{t("discover.title")}</h1>
           <p className="text-xs text-zinc-500 font-sans mt-0.5">{t("discover.subtitle")}</p>

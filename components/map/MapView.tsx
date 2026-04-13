@@ -1,22 +1,16 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import MapGL, { Marker, Popup, type MapRef } from "react-map-gl/mapbox";
+import MapGL, { Marker, type MapRef } from "react-map-gl/mapbox";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Event, NearbyMapItem, Place, ParisCategory } from "@/types";
 import { EventPin } from "./EventPin";
-import { PARIS_CENTER } from "@/lib/constants";
-import { PlaceMapPopup } from "./PlaceMapPopup";
+import { PlaceMapLabel } from "./PlaceMapLabel";
+import { clusterPlaces, clusterCellForZoom, LABEL_ZOOM_THRESHOLD, CLUSTER_ZOOM_THRESHOLD } from "@/utils/mapHelpers";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
-
-/** Wider than inner Paris so suburbs + edge cases work; still focused on the region */
-const PARIS_REGION_BOUNDS: [[number, number], [number, number]] = [
-  [1.92, 48.62],
-  [2.62, 49.08],
-];
 
 interface MapViewProps {
   events: Event[];
@@ -35,10 +29,27 @@ interface MapViewProps {
   showUserMarker?: boolean;
   /** After first fix, fly map here once */
   flyToUserOnce?: { lat: number; lng: number } | null;
-  /** Briefly open popups + pulse these place ids (nearest picks) */
+  /** Initial map center when no user location yet */
+  initialCenter?: { lat: number; lng: number };
+  /** After location: pulse these place ids (nearest picks) */
   spotlightPlaceIds?: string[];
+  /** Keep labels expanded for nearby places after location is detected */
+  persistentLabelPlaceIds?: string[];
   onSpotlightConsumed?: () => void;
 }
+
+/** Emoji for a place category cluster bubble */
+const CLUSTER_EMOJI: Record<string, string> = {
+  cafe: "☕",
+  restaurant: "🍽️",
+  bar: "🍷",
+  boulangerie: "🥐",
+  gallery: "🖼️",
+  park: "🌳",
+  market: "🛍️",
+  club: "🌙",
+  bookshop: "📚",
+};
 
 export function MapView({
   events,
@@ -54,21 +65,44 @@ export function MapView({
   userLocation = null,
   showUserMarker = false,
   flyToUserOnce = null,
+  initialCenter,
   spotlightPlaceIds = [],
+  persistentLabelPlaceIds = [],
   onSpotlightConsumed,
 }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownRef = useRef(false);
   const lastMarkerClickMs = useRef(0);
   const ignoreNextMapClick = useRef(false);
-  const [popupPlaceId, setPopupPlaceId] = useState<string | null>(null);
+  const rafRef = useRef<number | null>(null);
+
   const [spotlightOpen, setSpotlightOpen] = useState<string[]>([]);
+  const [mapZoom, setMapZoom] = useState(initialCenter ? 13 : 2);
+
+  // ── Zoom tracking via requestAnimationFrame ───────────────────────────────
+  const handleMove = useCallback(() => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const zoom = mapRef.current?.getZoom() ?? mapZoom;
+      setMapZoom(zoom);
+      rafRef.current = null;
+    });
+  }, [mapZoom]);
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
   const handleLoad = useCallback(() => {
     if (mapRef.current && onMapRef) {
       onMapRef(mapRef.current);
     }
-  }, [onMapRef]);
+    const zoom = mapRef.current?.getZoom() ?? mapZoom;
+    setMapZoom(zoom);
+  }, [onMapRef, mapZoom]);
 
   const handleMoveEnd = useCallback(() => {
     if (!mapRef.current || !onBoundsChange) return;
@@ -98,12 +132,11 @@ export function MapView({
       setSpotlightOpen([]);
       return;
     }
-    // Pulse the nearest markers (no auto-popup — user clicks to open popup permanently)
     setSpotlightOpen(spotlightPlaceIds.slice(0, 5));
     const t = window.setTimeout(() => {
       setSpotlightOpen([]);
       onSpotlightConsumed?.();
-    }, 4000);
+    }, 12000);
     return () => window.clearTimeout(t);
   }, [spotlightPlaceIds, onSpotlightConsumed]);
 
@@ -111,9 +144,9 @@ export function MapView({
     ? events.filter((e) => e.category === categoryFilter)
     : events;
 
-  /** Bubbles match pins: cluster everything actually drawn (not only API `items` slice). */
-  const itemsForClusters = useMemo((): NearbyMapItem[] => {
-    const ev: NearbyMapItem[] = filteredEvents.map((e) => ({
+  // ── Event cluster bubbles ─────────────────────────────────────────────────
+  const eventNearbyItems = useMemo((): NearbyMapItem[] => {
+    return filteredEvents.map((e) => ({
       id: e.id,
       type: "event",
       name: e.title,
@@ -125,28 +158,12 @@ export function MapView({
       location_name: e.location_name,
       arrondissement: e.arrondissement,
     }));
-    const pl: NearbyMapItem[] = places.map((p) => ({
-      id: p.id,
-      type: "place",
-      name: p.name,
-      category: p.category,
-      lat: p.lat,
-      lng: p.lng,
-      distance_km: p.distance_km ?? 0,
-      location_name: p.address,
-      arrondissement: p.arrondissement,
-    }));
-    return [...ev, ...pl];
-  }, [filteredEvents, places]);
+  }, [filteredEvents]);
 
-  const activityClusters = useMemo(() => {
+  const eventClusters = useMemo(() => {
     const CELL = 0.006;
-    const bucket = new Map<
-      string,
-      { items: NearbyMapItem[]; lat: number; lng: number }
-    >();
-
-    for (const item of itemsForClusters) {
+    const bucket = new Map<string, { items: NearbyMapItem[]; lat: number; lng: number }>();
+    for (const item of eventNearbyItems) {
       const kLat = Math.round(item.lat / CELL);
       const kLng = Math.round(item.lng / CELL);
       const key = `${kLat}:${kLng}`;
@@ -154,65 +171,52 @@ export function MapView({
       if (!existing) {
         bucket.set(key, { items: [item], lat: item.lat, lng: item.lng });
       } else {
-        const nextCount = existing.items.length + 1;
+        const n = existing.items.length + 1;
         existing.items.push(item);
-        existing.lat = (existing.lat * (nextCount - 1) + item.lat) / nextCount;
-        existing.lng = (existing.lng * (nextCount - 1) + item.lng) / nextCount;
+        existing.lat = (existing.lat * (n - 1) + item.lat) / n;
+        existing.lng = (existing.lng * (n - 1) + item.lng) / n;
       }
     }
+    return Array.from(bucket.values()).map((g) => ({
+      lat: g.lat,
+      lng: g.lng,
+      count: g.items.length,
+      top: [...g.items].sort((a, b) => (a.distance_km ?? 1e9) - (b.distance_km ?? 1e9))[0],
+    }));
+  }, [eventNearbyItems]);
 
-    return Array.from(bucket.values()).map((group) => {
-      const sorted = [...group.items].sort(
-        (a, b) => (a.distance_km ?? 1e9) - (b.distance_km ?? 1e9)
-      );
-      const top = sorted[0];
-      return {
-        lat: group.lat,
-        lng: group.lng,
-        count: group.items.length,
-        top,
-      };
-    });
-  }, [itemsForClusters]);
+  // ── Place clustering (zoom-aware) ─────────────────────────────────────────
+  const { clusters: placeClusters, singletons: singletonPlaces } = useMemo(() => {
+    if (mapZoom > CLUSTER_ZOOM_THRESHOLD) {
+      return { clusters: [], singletons: places };
+    }
+    const cellDeg = clusterCellForZoom(mapZoom);
+    return clusterPlaces(places, cellDeg);
+  }, [places, mapZoom]);
 
-  const bubbleLabel = useCallback((item: NearbyMapItem) => {
+  // ── Label expansion logic (zoom-aware) ───────────────────────────────────
+  // zoom >= LABEL_ZOOM_THRESHOLD → show all persistent labels
+  // zoom < LABEL_ZOOM_THRESHOLD  → only spotlit places show labels
+  const showAllLabels = mapZoom >= LABEL_ZOOM_THRESHOLD;
+
+  const bubbleEventLabel = useCallback((item: NearbyMapItem) => {
     const cat = String(item.category).toLowerCase();
-    if (cat.includes("cafe")) return "Brunch";
-    if (cat.includes("restaurant") || cat.includes("food")) return "Food";
-    if (cat.includes("bar")) return "Apero";
-    if (cat.includes("nightlife") || cat.includes("club")) return "Night";
-    if (cat.includes("pop-up")) return "Pop-up";
-    if (cat.includes("market")) return "Market";
-    return item.type === "event" ? "Live" : "Spot";
+    if (cat.includes("cafe")) return "☕ Brunch";
+    if (cat.includes("restaurant") || cat.includes("food")) return "🍽️ Food";
+    if (cat.includes("bar")) return "🍷 Apero";
+    if (cat.includes("nightlife") || cat.includes("club")) return "🎶 Night";
+    if (cat.includes("market")) return "🛍️ Market";
+    return item.type === "event" ? "✨ Live" : "📍 Spot";
   }, []);
 
-  const bubbleEmoji = useCallback((item: NearbyMapItem) => {
-    const cat = String(item.category).toLowerCase();
-    if (cat.includes("cafe")) return "☕";
-    if (cat.includes("restaurant") || cat.includes("food")) return "🍽️";
-    if (cat.includes("bar")) return "🍷";
-    if (cat.includes("nightlife") || cat.includes("club")) return "🎶";
-    if (cat.includes("market")) return "🛍️";
-    if (item.type === "event") return "✨";
-    return "📍";
-  }, []);
-
-  // Popup only shows when explicitly clicked — spotlight just pulses the marker dot
-  const showPopupFor = (id: string) => popupPlaceId === id;
-
-  const ringPlaceId = selectedPlaceId || popupPlaceId;
+  const ringPlaceId = selectedPlaceId;
 
   const handleMapClick = useCallback(() => {
-    // Marker/bubble clicks can still trigger Map.onClick in react-map-gl.
-    // Explicitly swallow the next map click after marker interactions.
     if (ignoreNextMapClick.current) {
       ignoreNextMapClick.current = false;
       return;
     }
-    // Guard: if a marker was clicked within the last 150 ms, skip — the Marker's
-    // onClick and the Map's onClick both fire and would immediately cancel each other.
     if (Date.now() - lastMarkerClickMs.current < 150) return;
-    setPopupPlaceId(null);
     onEventSelect(null);
     onPlaceSelect?.(null);
   }, [onEventSelect, onPlaceSelect]);
@@ -235,20 +239,21 @@ export function MapView({
       mapLib={mapboxgl}
       mapboxAccessToken={MAPBOX_TOKEN}
       initialViewState={{
-        longitude: PARIS_CENTER.lng,
-        latitude: PARIS_CENTER.lat,
-        zoom: 13,
+        longitude: initialCenter?.lng ?? 0,
+        latitude: initialCenter?.lat ?? 20,
+        zoom: initialCenter ? 13 : 2,
       }}
       style={{ width: "100%", height: "100%" }}
       mapStyle={MAP_STYLE}
-      minZoom={11}
+      minZoom={2}
       maxZoom={18}
-      maxBounds={PARIS_REGION_BOUNDS}
       onLoad={handleLoad}
+      onMove={handleMove}
       onMoveEnd={handleMoveEnd}
       onClick={handleMapClick}
       attributionControl={false}
     >
+      {/* User location marker */}
       {showUserMarker && userLocation && (
         <Marker longitude={userLocation.lng} latitude={userLocation.lat} anchor="bottom">
           <div className="flex flex-col items-center pointer-events-none select-none">
@@ -266,6 +271,7 @@ export function MapView({
         </Marker>
       )}
 
+      {/* Individual event pins */}
       {filteredEvents.map((event) => {
         const isHighlighted = highlightedEventIds?.has(event.id) ?? false;
         const isSelected = selectedEventId === event.id;
@@ -279,7 +285,6 @@ export function MapView({
               e.originalEvent.stopPropagation();
               ignoreNextMapClick.current = true;
               lastMarkerClickMs.current = Date.now();
-              setPopupPlaceId(null);
               onEventSelect(isSelected ? null : event);
             }}
           >
@@ -299,46 +304,81 @@ export function MapView({
         );
       })}
 
-      {places.map((place) => {
+      {/* Singleton place labels (not clustered) */}
+      {singletonPlaces.map((place) => {
         const selected = ringPlaceId === place.id;
         const pulsing = spotlightOpen.includes(place.id);
+        const expanded =
+          pulsing ||
+          selected ||
+          (showAllLabels && persistentLabelPlaceIds.includes(place.id));
         return (
           <Marker
             key={place.id}
             longitude={place.lng}
             latitude={place.lat}
-            anchor="center"
+            anchor="left"
             onClick={(e) => {
               e.originalEvent.stopPropagation();
               ignoreNextMapClick.current = true;
               lastMarkerClickMs.current = Date.now();
               onEventSelect(null);
-              setPopupPlaceId((id) => (id === place.id ? null : place.id));
+              onPlaceSelect?.(place);
             }}
           >
-            <div
-              className={`rounded-full border-2 border-white/90 cursor-pointer transition-transform ${
-                pulsing ? "animate-pulse" : ""
-              }`}
-              style={{
-                width: selected ? 16 : 12,
-                height: selected ? 16 : 12,
-                background: "var(--accent-gold)",
-                transform: selected || pulsing ? "scale(1.25)" : undefined,
-                boxShadow: pulsing ? "0 0 0 6px rgba(201,168,76,0.35)" : undefined,
-              }}
-              title={place.name}
+            <PlaceMapLabel
+              place={place}
+              expanded={expanded}
+              selected={selected}
+              pulsing={pulsing}
             />
           </Marker>
         );
       })}
 
-      {activityClusters.map((cluster) => {
-        const plus = cluster.count > 1 ? ` +${cluster.count}` : "";
-        const label = `${bubbleEmoji(cluster.top)} ${bubbleLabel(cluster.top)}${plus}`;
+      {/* Place cluster bubbles (when zoomed out) */}
+      {placeClusters.map((cluster) => {
+        const emoji = CLUSTER_EMOJI[cluster.topCategory] ?? "📍";
         return (
           <Marker
-            key={`bubble-${cluster.top.type}-${cluster.top.id}-${cluster.count}`}
+            key={`cluster-${cluster.topPlaceId}`}
+            longitude={cluster.lng}
+            latitude={cluster.lat}
+            anchor="center"
+            onClick={(e) => {
+              e.originalEvent.stopPropagation();
+              ignoreNextMapClick.current = true;
+              lastMarkerClickMs.current = Date.now();
+              // Fly in to reveal individual places
+              mapRef.current?.flyTo({
+                center: [cluster.lng, cluster.lat],
+                zoom: Math.min(mapZoom + 2, 14),
+                duration: 600,
+              });
+            }}
+          >
+            <div
+              className="cursor-pointer flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-white/95 shadow-lg border border-black/10 hover:scale-110 transition-transform"
+              style={{ backdropFilter: "blur(8px)" }}
+            >
+              <span className="text-base leading-none">{emoji}</span>
+              <span
+                className="text-[11px] font-bold text-zinc-800 leading-none"
+                style={{ fontFamily: "system-ui, sans-serif" }}
+              >
+                {cluster.count}
+              </span>
+            </div>
+          </Marker>
+        );
+      })}
+
+      {/* Event cluster activity bubbles */}
+      {eventClusters.map((cluster) => {
+        const label = bubbleEventLabel(cluster.top);
+        return (
+          <Marker
+            key={`evbubble-${cluster.top.id}-${cluster.count}`}
             longitude={cluster.lng}
             latitude={cluster.lat}
             anchor="bottom"
@@ -346,20 +386,8 @@ export function MapView({
               e.originalEvent.stopPropagation();
               ignoreNextMapClick.current = true;
               lastMarkerClickMs.current = Date.now();
-              if (cluster.top.type === "place") {
-                const place = places.find((p) => p.id === cluster.top.id);
-                if (place) {
-                  setPopupPlaceId(place.id);
-                }
-                // Keep the bubble interaction lightweight: open popup first,
-                // user can tap "Details" inside popup to open the full sheet.
-                onPlaceSelect?.(null);
-                onEventSelect(null);
-              } else {
-                const event = filteredEvents.find((ev) => ev.id === cluster.top.id);
-                if (event) onEventSelect(event);
-                setPopupPlaceId(null);
-              }
+              const event = filteredEvents.find((ev) => ev.id === cluster.top.id);
+              if (event) onEventSelect(event);
             }}
           >
             <div className="pointer-events-auto -translate-y-3 rounded-full bg-black/92 text-white text-[10px] font-semibold px-2.5 py-1 shadow-lg border border-white/20 whitespace-nowrap cursor-pointer hover:scale-[1.03] transition-transform">
@@ -368,32 +396,6 @@ export function MapView({
           </Marker>
         );
       })}
-
-      {places
-        .filter((p) => showPopupFor(p.id))
-        .map((place) => (
-          <Popup
-            key={`pop-${place.id}`}
-            longitude={place.lng}
-            latitude={place.lat}
-            anchor="bottom"
-            offset={18}
-            onClose={() => {
-              setPopupPlaceId((id) => (id === place.id ? null : id));
-            }}
-            closeButton
-            closeOnClick={false}
-            className="map-place-popup-root"
-          >
-            <PlaceMapPopup
-              place={place}
-              onOpenDetail={() => {
-                setPopupPlaceId(null);
-                onPlaceSelect?.(place);
-              }}
-            />
-          </Popup>
-        ))}
     </MapGL>
   );
 }

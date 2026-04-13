@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <rect width="1200" height="630" fill="#0d0d12"/>
+  <text x="600" y="290" font-family="Georgia, serif" font-size="96" fill="#C9A84C" text-anchor="middle" font-weight="bold">paris</text>
+  <text x="600" y="380" font-family="system-ui, sans-serif" font-size="32" fill="#888" text-anchor="middle">Discover your city</text>
+  <path d="M580 440C580 426 600 408 600 408s20 18 20 32c0 11.046-8.954 20-20 20s-20-8.954-20-20z" fill="#C9A84C"/>
+</svg>

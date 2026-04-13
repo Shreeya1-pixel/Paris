@@ -180,11 +180,26 @@ body {
     display: none;
   }
 
+  /* iOS safe-area utilities (requires viewport-fit=cover) */
   .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .pb-nav {
-    padding-bottom: 88px;
+    /* bottom nav (72px) + safe area home indicator */
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 8px);
+  }
+
+  /* Top safe area — pushes content below notch / Dynamic Island */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  /* min 48px top padding, grows with notch (Dynamic Island = ~59px) */
+  .pt-safe-top {
+    padding-top: max(48px, env(safe-area-inset-top, 0px));
+  }
+  /* min 16px top padding + safe area for page section headers */
+  .pt-safe-base {
+    padding-top: max(16px, env(safe-area-inset-top, 0px));
   }
 
   .text-gold {
@@ -255,26 +270,4 @@ body {
 }
 [data-stagger] > *:nth-child(n + 7) {
   animation-delay: 300ms;
-}
-
-/* Mapbox GL — glass-style place popups */
-.map-place-popup-root .mapboxgl-popup-content {
-  padding: 0;
-  background: transparent;
-  border-radius: 1rem;
-  box-shadow: none;
-}
-.map-place-popup-root .mapboxgl-popup-tip {
-  border-top-color: rgba(24, 24, 27, 0.92);
-}
-.map-place-popup-root .mapboxgl-popup-close-button {
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 18px;
-  padding: 4px 8px;
-  right: 2px;
-  top: 2px;
-}
-.map-place-popup-root .mapboxgl-popup-close-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
 }

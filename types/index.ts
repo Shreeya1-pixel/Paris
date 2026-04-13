@@ -29,6 +29,7 @@ export type PlaceCategory =
   | "bar"
   | "gallery"
   | "park"
+  | "library"
   | "market"
   | "club"
   | "bookshop"

@@ -7,7 +7,7 @@ import {
   X,
   MapPin,
   Clock,
-  Heart,
+  Bookmark,
   ExternalLink,
   Instagram,
   Navigation,
@@ -16,6 +16,7 @@ import {
 import type { Place } from "@/types";
 import { useLanguage } from "@/components/LanguageProvider";
 import { haversineKm } from "@/lib/geo";
+import { placePlaceholderImage } from "@/lib/categoryImages";
 
 interface PlaceDetailSheetProps {
   place: Place | null;
@@ -135,19 +136,15 @@ export function PlaceDetailSheet({
         className="fixed left-0 right-0 bottom-[72px] z-50 max-h-[calc(100dvh-72px-env(safe-area-inset-top,0px)-16px)] overflow-y-auto rounded-t-[22px] bg-white shadow-2xl"
       >
         <div className="relative w-full h-52 shrink-0">
-          {place.image_url ? (
-            <Image
-              src={place.image_url}
-              alt={place.name}
-              fill
-              className="object-cover"
-              sizes="100vw"
-              priority
-            />
-          ) : (
-            <div className="absolute inset-0 bg-[var(--bg-glass)]" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent" />
+          <Image
+            src={place.image_url || placePlaceholderImage(place.category)}
+            alt={place.name}
+            fill
+            className="object-cover"
+            sizes="100vw"
+            priority
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-white via-white/10 to-transparent" />
 
           <button
             type="button"
@@ -168,15 +165,15 @@ export function PlaceDetailSheet({
           <button
             type="button"
             onClick={onSave}
-            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-black/50 flex items-center justify-center"
+            className="absolute top-4 right-4 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+            style={{
+              background: place.is_saved ? "var(--accent-gold)" : "rgba(0,0,0,0.5)",
+            }}
             aria-label="Save"
           >
-            <Heart
-              className="w-4 h-4 transition-all"
-              style={{
-                fill: place.is_saved ? "var(--accent-gold)" : "none",
-                color: place.is_saved ? "var(--accent-gold)" : "white",
-              }}
+            <Bookmark
+              className="w-4 h-4"
+              style={{ fill: place.is_saved ? "white" : "none", color: "white", strokeWidth: 2 }}
             />
           </button>
         </div>
@@ -192,9 +189,9 @@ export function PlaceDetailSheet({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="inline-flex items-center gap-1 text-zinc-700">
+            <span className="inline-flex items-center gap-1 text-zinc-700 rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5">
               <span className="text-amber-500">★</span>
-              <span className="font-medium">—</span>
+              <span className="font-medium text-[12px]">Top pick</span>
             </span>
             <span className="text-zinc-400">·</span>
             <span className="text-zinc-600">{distanceKm < 1 ? `${Math.round(distanceKm * 1000)}m` : `${distanceKm.toFixed(1)}km`}</span>
@@ -249,12 +246,17 @@ export function PlaceDetailSheet({
             <button
               type="button"
               onClick={onSave}
-              className="w-12 h-12 rounded-2xl border border-zinc-200 flex items-center justify-center"
+              className="w-12 h-12 rounded-2xl border border-zinc-200 flex items-center justify-center transition-colors"
+              style={{ background: place.is_saved ? "var(--accent-gold)" : undefined }}
               aria-label="Save"
             >
-              <Heart
+              <Bookmark
                 className="w-5 h-5"
-                style={{ fill: place.is_saved ? "var(--accent-gold)" : "none", color: place.is_saved ? "var(--accent-gold)" : "#27272a" }}
+                style={{
+                  fill: place.is_saved ? "white" : "none",
+                  color: place.is_saved ? "white" : "#27272a",
+                  strokeWidth: 2,
+                }}
               />
             </button>
             <button

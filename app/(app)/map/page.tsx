@@ -12,11 +12,11 @@ import { EventDetailModal } from "@/components/map/EventDetailModal";
 import { PlaceDetailSheet } from "@/components/discover/PlaceDetailSheet";
 import { AiRecommendPanel } from "@/components/map/AiRecommendPanel";
 import type { Event, NearbyMapItem, Place } from "@/types";
-import { PARIS_CENTER } from "@/lib/constants";
 import { MapLoadingFallback } from "@/components/map/MapLoadingFallback";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useUserLocation } from "@/hooks/useUserLocation";
 import { useDebouncedCoords } from "@/hooks/useDebouncedCoords";
+import { usePlaces } from "@/hooks/usePlaces";
 import { useSavedEventIds } from "@/hooks/useSavedEvents";
 import { useSavedPlaceIds, useSavedPlaceRows } from "@/hooks/useSavedPlaces";
 import { useAiRecommend } from "@/hooks/useAiRecommend";
@@ -33,21 +33,34 @@ const MapView = dynamic(
 const NEARBY_STALE_MS = 3 * 60 * 1000;
 const NEARBY_RADIUS_KM = 6;
 
+const PARIS = { lat: 48.8566, lng: 2.3522 };
+
 export default function MapPage() {
   const { lang } = useLanguage();
   const [liveTrack, setLiveTrack] = useState(false);
+  // Dev-only: override GPS with a hardcoded location (Paris by default)
+  const [devOverride, setDevOverride] = useState<{ lat: number; lng: number } | null>(null);
   const {
-    lat,
-    lng,
-    coords,
+    lat: gpsLat,
+    lng: gpsLng,
+    coords: gpsCoords,
     loading: locationLoading,
     error: locationError,
     status: locStatus,
     refresh,
   } = useUserLocation({ watch: liveTrack });
-  const resolvedLat = lat ?? (locStatus === "denied" ? PARIS_CENTER.lat : null);
-  const resolvedLng = lng ?? (locStatus === "denied" ? PARIS_CENTER.lng : null);
-  const debounced = useDebouncedCoords(resolvedLat ?? coords.lat, resolvedLng ?? coords.lng, 750);
+
+  // Effective coords: dev override wins over GPS
+  const lat = devOverride?.lat ?? gpsLat;
+  const lng = devOverride?.lng ?? gpsLng;
+  const coords = useMemo(
+    () => (devOverride ? { lat: devOverride.lat, lng: devOverride.lng } : gpsCoords),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [devOverride?.lat, devOverride?.lng, gpsCoords],
+  );
+  const resolvedLat = lat;
+  const resolvedLng = lng;
+  const debounced = useDebouncedCoords(resolvedLat ?? 0, resolvedLng ?? 0, 750);
   const { savedIds: savedEventIds, toggleSaved: toggleEventSaved } = useSavedEventIds();
   const { savedIds: savedPlaceIds, toggleSaved: togglePlaceSaved, ready: savedPlaceIdsReady } =
     useSavedPlaceIds();
@@ -73,6 +86,9 @@ export default function MapPage() {
   const recommend = useAiRecommend();
   const [recommendOpen, setRecommendOpen] = useState(false);
 
+  // ── Foursquare live places (with 500 m threshold + debounce) ─────────────
+  const { places: foursquarePlaces } = usePlaces(lat, lng, 2000);
+
   // ── Unified nearby feed (events + places) ────────────────────────────────
   const { data: nearbyRes } = useQuery({
     queryKey: ["nearby", debounced.lat, debounced.lng, NEARBY_RADIUS_KM],
@@ -88,7 +104,7 @@ export default function MapPage() {
       return res.json() as Promise<{ items: NearbyMapItem[]; events: Event[]; places: Place[] }>;
     },
     staleTime: NEARBY_STALE_MS,
-    enabled: resolvedLat !== null && resolvedLng !== null,
+    enabled: resolvedLat !== null && resolvedLng !== null && debounced.lat !== 0 && debounced.lng !== 0,
   });
 
   useEffect(() => {
@@ -106,9 +122,17 @@ export default function MapPage() {
 
   const mapPlacesRaw = useMemo(() => {
     const byId = new Map<string, Place>();
+    // 1. Supabase nearby places
     for (const p of nearbyRes?.places ?? []) {
       byId.set(p.id, { ...p, is_saved: savedPlaceIds.has(p.id) });
     }
+    // 2. Foursquare live places (fill in where no Supabase entry exists)
+    for (const p of foursquarePlaces) {
+      if (!byId.has(p.id)) {
+        byId.set(p.id, { ...p, is_saved: savedPlaceIds.has(p.id) });
+      }
+    }
+    // 3. AI-highlighted places
     for (const p of highlightedPlaces) {
       const existing = byId.get(p.id);
       byId.set(p.id, {
@@ -116,6 +140,7 @@ export default function MapPage() {
         is_saved: existing?.is_saved ?? savedPlaceIds.has(p.id),
       });
     }
+    // 4. Saved places (always visible)
     for (const p of savedPlaceRows) {
       const existing = byId.get(p.id);
       if (!existing) {
@@ -125,12 +150,18 @@ export default function MapPage() {
       }
     }
     return Array.from(byId.values());
-  }, [nearbyRes?.places, highlightedPlaces, savedPlaceIds, savedPlaceRows]);
+  }, [nearbyRes?.places, foursquarePlaces, highlightedPlaces, savedPlaceIds, savedPlaceRows]);
 
   const mapPlaces = useMemo(() => {
     if (placeFilters.length === 0) return mapPlacesRaw;
     return mapPlacesRaw.filter((p) => placeFilters.includes(p.category as NearbyPlaceFilter));
   }, [mapPlacesRaw, placeFilters]);
+
+  const persistentLabelPlaceIds = useMemo(() => {
+    if (lat == null || lng == null) return [] as string[];
+    // Show expanded labels for every place currently on the map
+    return mapPlaces.map((p) => p.id);
+  }, [lat, lng, mapPlaces]);
 
   useEffect(() => {
     if (locStatus !== "granted" || hasFlownToUser.current || lat == null || lng == null) return;
@@ -167,16 +198,37 @@ export default function MapPage() {
       setHighlightedPlaces(aiPlaces);
       setAiMessage(result.message ?? "");
 
-      if (mapRef.current && aiEvents.length > 0) {
-        const lngs = aiEvents.map((e) => e.lng);
-        const lats = aiEvents.map((e) => e.lat);
-        mapRef.current.fitBounds(
-          [
-            [Math.min(...lngs) - 0.005, Math.min(...lats) - 0.003],
-            [Math.max(...lngs) + 0.005, Math.max(...lats) + 0.003],
-          ],
-          { padding: 80, duration: 1200 }
-        );
+      // Spotlight returned places so their labels pulse
+      if (aiPlaces.length > 0) {
+        setSpotlightPlaceIds(aiPlaces.map((p) => p.id));
+      }
+
+      // Fly map to show all returned places/events
+      const allLngs = [
+        ...aiEvents.map((e) => e.lng),
+        ...aiPlaces.map((p) => p.lng),
+      ].filter(Boolean) as number[];
+      const allLats = [
+        ...aiEvents.map((e) => e.lat),
+        ...aiPlaces.map((p) => p.lat),
+      ].filter(Boolean) as number[];
+
+      if (mapRef.current && allLngs.length > 0) {
+        if (allLngs.length === 1) {
+          mapRef.current.flyTo({
+            center: [allLngs[0], allLats[0]],
+            zoom: 15,
+            duration: 1000,
+          });
+        } else {
+          mapRef.current.fitBounds(
+            [
+              [Math.min(...allLngs) - 0.006, Math.min(...allLats) - 0.004],
+              [Math.max(...allLngs) + 0.006, Math.max(...allLats) + 0.004],
+            ],
+            { padding: 80, duration: 1200 }
+          );
+        }
       }
     },
     []
@@ -240,31 +292,29 @@ export default function MapPage() {
       if (item.type === "event") {
         const ev = allEvents.find((e) => e.id === item.id);
         if (ev) {
+          setRecommendOpen(false);
           setDetailEvent(ev);
           setSelectedEvent(ev);
           setDetailPlace(null);
         }
       } else {
-        const pl = mapPlaces.find((p) => p.id === item.id);
+        const pl = mapPlacesRaw.find((p) => p.id === item.id);
         if (pl) {
+          setRecommendOpen(false);
           setDetailPlace(pl);
           setSelectedEvent(null);
           setDetailEvent(null);
         }
       }
     },
-    [allEvents, mapPlaces]
+    [allEvents, mapPlacesRaw]
   );
 
   const handleRecenter = useCallback(() => {
-    const targetLat = lat ?? (locStatus === "denied" ? PARIS_CENTER.lat : coords.lat);
-    const targetLng = lng ?? (locStatus === "denied" ? PARIS_CENTER.lng : coords.lng);
-    mapRef.current?.flyTo({
-      center: [targetLng, targetLat],
-      zoom: 13,
-      duration: 800,
-    });
-  }, [lat, lng, coords.lat, coords.lng, locStatus]);
+    if (lat != null && lng != null) {
+      mapRef.current?.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
+    }
+  }, [lat, lng]);
 
   const handleMapEventSelect = useCallback((event: Event | null) => {
     setSelectedEvent(event);
@@ -293,7 +343,8 @@ export default function MapPage() {
       <MapLocationHUD status={locStatus} lat={coords.lat} lng={coords.lng} tracking={liveTrack} />
 
       {process.env.NODE_ENV === "development" && (
-        <div className="absolute top-[200px] left-2 z-30 pointer-events-auto">
+        <div className="absolute left-2 z-30 pointer-events-auto"
+          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 180px)" }}>
           <label className="flex items-center gap-2 px-2 py-1 rounded-lg bg-black/60 text-[10px] text-white font-sans cursor-pointer">
             <input
               type="checkbox"
@@ -306,24 +357,52 @@ export default function MapPage() {
         </div>
       )}
 
-      <div className="absolute top-[78px] right-3 z-30 pointer-events-auto">
-        <div className="rounded-xl border border-white/20 bg-black/65 text-white text-[11px] px-2.5 py-2 backdrop-blur-sm min-w-[170px]">
-          {locationLoading && <div>Detecting location...</div>}
-          {locationError && <div className="text-amber-300">Error: {locationError}</div>}
-          {lat != null && lng != null && (
-            <div>
-              Lat: {lat.toFixed(5)} Lng: {lng.toFixed(5)}
+      {/* Dev-only location debug overlay */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="absolute right-3 z-30 pointer-events-auto"
+          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 58px)" }}>
+          <div className="rounded-xl border border-white/20 bg-black/65 text-white text-[11px] px-2.5 py-2 backdrop-blur-sm min-w-[180px] space-y-1.5">
+            {locationLoading && !devOverride && <div className="text-zinc-300">Detecting location…</div>}
+            {locationError && !devOverride && <div className="text-amber-300">GPS error — use override below</div>}
+            {lat != null && lng != null && (
+              <div className="text-zinc-300">
+                {devOverride ? "🧪 Override" : "📍 GPS"} {lat.toFixed(4)}, {lng.toFixed(4)}
+              </div>
+            )}
+            {/* Quick-set buttons */}
+            <div className="flex gap-1 flex-wrap pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setDevOverride(PARIS);
+                  mapRef.current?.flyTo({ center: [PARIS.lng, PARIS.lat], zoom: 14, duration: 900 });
+                }}
+                className="rounded-md px-2 py-1 bg-blue-500/70 hover:bg-blue-500 transition-colors text-white font-semibold"
+              >
+                📍 Paris
+              </button>
+              {devOverride && (
+                <button
+                  type="button"
+                  onClick={() => setDevOverride(null)}
+                  className="rounded-md px-2 py-1 bg-white/15 hover:bg-white/25 transition-colors"
+                >
+                  Use GPS
+                </button>
+              )}
+              {!devOverride && (
+                <button
+                  type="button"
+                  onClick={refresh}
+                  className="rounded-md px-2 py-1 bg-white/15 hover:bg-white/25 transition-colors"
+                >
+                  Retry GPS
+                </button>
+              )}
             </div>
-          )}
-          <button
-            type="button"
-            onClick={refresh}
-            className="mt-1.5 rounded-md px-2 py-1 bg-white/15 hover:bg-white/25 transition-colors"
-          >
-            Retry location
-          </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Map layer */}
       <div className="absolute inset-0 z-0">
@@ -342,7 +421,9 @@ export default function MapPage() {
           userLocation={showUserMarker && lat != null && lng != null ? { lat, lng } : null}
           showUserMarker={showUserMarker}
           flyToUserOnce={flyToUserOnce}
+          initialCenter={lat != null && lng != null ? { lat, lng } : undefined}
           spotlightPlaceIds={spotlightPlaceIds}
+          persistentLabelPlaceIds={persistentLabelPlaceIds}
           onSpotlightConsumed={() => setSpotlightPlaceIds([])}
         />
       </div>
@@ -351,7 +432,8 @@ export default function MapPage() {
 
       {/* Chat AI message banner */}
       {aiMessage && !showRecommend && (
-        <div className="absolute top-[76px] left-4 right-4 z-20 px-3 py-2 rounded-2xl bg-white/90 border border-zinc-200 text-xs text-zinc-600 shadow-sm">
+        <div className="absolute left-4 right-4 z-20 px-3 py-2 rounded-2xl bg-white/90 border border-zinc-200 text-xs text-zinc-600 shadow-sm"
+          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 56px)" }}>
           {aiMessage}
         </div>
       )}

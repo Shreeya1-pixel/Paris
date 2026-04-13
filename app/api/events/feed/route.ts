@@ -156,8 +156,20 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const candidates = ((data ?? []) as Event[])
+  let candidates = ((data ?? []) as Event[])
     .filter((e) => haversineKm(lat, lng, e.lat, e.lng) <= radiusKm);
+
+  // When user is outside the event area, fall back to all active upcoming events globally.
+  if (candidates.length === 0) {
+    const { data: globalData } = await publicSupabase
+      .from("events")
+      .select("*")
+      .eq("status", "active")
+      .gt("start_time", nowIso)
+      .order("start_time", { ascending: true })
+      .limit(MAX_FETCH);
+    candidates = (globalData ?? []) as Event[];
+  }
 
   // ── 6. Score + sort ───────────────────────────────────────────────────────────
   const scored = candidates

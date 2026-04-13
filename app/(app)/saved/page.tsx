@@ -37,7 +37,6 @@ export default function SavedPage() {
         router.push("/auth/login");
         return;
       }
-      const nowIso = new Date().toISOString();
       const { data: se } = await supabase
         .from("saved_events")
         .select("event_id")
@@ -49,8 +48,7 @@ export default function SavedPage() {
           .select("*")
           .in("id", eids)
           .eq("status", "active")
-          .gt("start_time", nowIso)
-          .order("start_time", { ascending: true });
+          .order("start_time", { ascending: false });
         if (!cancelled) setSavedEvents((evs ?? []) as Event[]);
       } else if (!cancelled) setSavedEvents([]);
 
@@ -81,7 +79,7 @@ export default function SavedPage() {
 
   return (
     <div className="min-h-dvh ow-app-bg pb-nav">
-      <header className="sticky top-0 z-20 px-5 pt-12 pb-4 bg-white/70 backdrop-blur-xl border-b border-zinc-200/60">
+      <header className="sticky top-0 z-20 px-5 pt-safe-top pb-4 bg-white/70 backdrop-blur-xl border-b border-zinc-200/60">
         <h1 className="font-display text-3xl font-semibold text-zinc-900">{t("saved.title")}</h1>
         <div className="flex mt-4 gap-1">
           {(["events", "places"] as Tab[]).map((tab) => (

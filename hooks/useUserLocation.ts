@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PARIS_CENTER } from "@/lib/geo";
 
 export type LocationStatus = "pending" | "granted" | "denied" | "unavailable" | "error";
 
@@ -11,6 +10,16 @@ export interface UserCoords {
 }
 
 const DEBOUNCE_MS = 5000;
+
+function isLockStolenAbort(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const maybe = err as { name?: string; message?: string };
+  return (
+    maybe.name === "AbortError" &&
+    typeof maybe.message === "string" &&
+    maybe.message.toLowerCase().includes("lock was stolen")
+  );
+}
 
 export function useUserLocation(options?: { watch?: boolean }) {
   const watch = options?.watch ?? false;
@@ -40,25 +49,37 @@ export function useUserLocation(options?: { watch?: boolean }) {
       setError("Geolocation not supported");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        applyPosition(pos.coords.latitude, pos.coords.longitude, "granted");
-      },
-      (err) => {
-        const denied = err.code === err.PERMISSION_DENIED;
-        setStatus(denied ? "denied" : "error");
-        setError(err.message || (denied ? "Permission denied" : "Unable to detect location"));
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          applyPosition(pos.coords.latitude, pos.coords.longitude, "granted");
+        },
+        (err) => {
+          // Safari/WebKit throws "Lock was stolen" as a POSITION_UNAVAILABLE error
+          if (
+            err.message?.toLowerCase().includes("lock was stolen") ||
+            err.message?.toLowerCase().includes("aborted")
+          ) {
+            setLoading(false);
+            return;
+          }
+          const denied = err.code === err.PERMISSION_DENIED;
+          setStatus(denied ? "denied" : "error");
+          setError(err.message || (denied ? "Permission denied" : "Unable to detect location"));
+          setLoading(false);
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10_000 }
+      );
+    } catch (err) {
+      if (isLockStolenAbort(err)) {
         setLoading(false);
-        // Fallback only when permission is denied.
-        if (denied) {
-          setLat(PARIS_CENTER.lat);
-          setLng(PARIS_CENTER.lng);
-          // eslint-disable-next-line no-console
-          console.log("User location:", PARIS_CENTER.lat, PARIS_CENTER.lng);
-        }
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10_000 }
-    );
+        return;
+      }
+      const msg = err instanceof Error ? err.message : "Unable to detect location";
+      setStatus("error");
+      setError(msg);
+      setLoading(false);
+    }
   }, [applyPosition]);
 
   useEffect(() => {
@@ -68,28 +89,42 @@ export function useUserLocation(options?: { watch?: boolean }) {
   useEffect(() => {
     if (!watch || typeof navigator === "undefined" || !navigator.geolocation) return;
 
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        if (watchTimer.current) clearTimeout(watchTimer.current);
-        watchTimer.current = setTimeout(() => {
-          applyPosition(pos.coords.latitude, pos.coords.longitude, "granted");
-        }, DEBOUNCE_MS);
-      },
-      (err) => {
-        setError(err.message || "Unable to track location");
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
-    );
+    let id: number | null = null;
+    try {
+      id = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (watchTimer.current) clearTimeout(watchTimer.current);
+          watchTimer.current = setTimeout(() => {
+            applyPosition(pos.coords.latitude, pos.coords.longitude, "granted");
+          }, DEBOUNCE_MS);
+        },
+        (err) => {
+          if (
+            err.code === err.POSITION_UNAVAILABLE &&
+            err.message?.toLowerCase().includes("lock was stolen")
+          ) {
+            return;
+          }
+          setError(err.message || "Unable to track location");
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
+      );
+    } catch (err) {
+      if (isLockStolenAbort(err)) return;
+      const msg = err instanceof Error ? err.message : "Unable to track location";
+      setError(msg);
+      return;
+    }
 
     return () => {
-      navigator.geolocation.clearWatch(id);
+      if (id != null) navigator.geolocation.clearWatch(id);
       if (watchTimer.current) clearTimeout(watchTimer.current);
     };
   }, [watch, applyPosition]);
 
   const coords: UserCoords = {
-    lat: lat ?? PARIS_CENTER.lat,
-    lng: lng ?? PARIS_CENTER.lng,
+    lat: lat ?? 0,
+    lng: lng ?? 0,
   };
 
   return { lat, lng, coords, loading, error, status, refresh };
