@@ -4,7 +4,7 @@
  */
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_ASSISTANT_TURNS = 3;
+const MAX_ASSISTANT_TURNS = 30;
 
 interface Entry {
   count: number;

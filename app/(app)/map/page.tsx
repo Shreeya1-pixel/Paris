@@ -342,12 +342,14 @@ export default function MapPage() {
       }
       setSearchLoading(true);
       setAiMessage("");
+      setHighlightedPlaces([]);
       setManualSearchHint(false);
       setRecommendOpen(false);
       recommend.clear();
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
+          cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query: q,
@@ -515,7 +517,6 @@ export default function MapPage() {
   }, []);
 
   const showRecommend = recommendOpen && (recommend.loading || recommend.items.length > 0 || !!recommend.error);
-  const assistantSuggestedPlaces = useMemo(() => highlightedPlaces.slice(0, 3), [highlightedPlaces]);
 
   const showUserMarker = locStatus === "granted" && lat != null && lng != null;
 
@@ -560,46 +561,46 @@ export default function MapPage() {
         onRecenter={handleRecenter}
       />
 
-      {/* Assistant suggestions above chat input */}
-      {!showRecommend && (assistantSuggestedPlaces.length > 0 || aiMessage) && (
+      {/* Assistant suggested places — vertical popup above chat */}
+      {highlightedPlaces.length > 0 && !showRecommend && (
         <div
           className="absolute left-3 right-3 z-30 pointer-events-auto"
-          style={{ bottom: "calc(76px + env(safe-area-inset-bottom, 0px))" }}
+          style={{ bottom: "calc(124px + env(safe-area-inset-bottom, 0px))" }}
         >
-          {assistantSuggestedPlaces.length > 0 ? (
-            <div className="rounded-2xl bg-white/95 border border-zinc-200 shadow-lg p-2.5 space-y-2 backdrop-blur-sm">
-              <p className="text-[11px] font-semibold text-zinc-700 px-1">Suggested places near you</p>
-              {assistantSuggestedPlaces.map((p) => (
-                <div
-                  key={`asst-place-${p.id}`}
-                  className="rounded-xl border border-zinc-200/80 bg-white px-2.5 py-2 flex items-center gap-2.5"
+          <div className="rounded-2xl bg-white/92 border border-zinc-200 shadow-lg backdrop-blur-sm px-2.5 py-2 space-y-2">
+            {highlightedPlaces.slice(0, 3).map((p) => (
+              <div
+                key={`chat-suggest-${p.id}`}
+                className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5"
+              >
+                <p className="text-sm font-semibold text-zinc-900 leading-tight truncate">{p.name}</p>
+                <p className="text-[11px] text-zinc-500 mt-0.5 truncate">
+                  {p.category}
+                  {p.distance_km != null
+                    ? p.distance_km < 1
+                      ? ` · ${Math.round(p.distance_km * 1000)} m away`
+                      : ` · ${p.distance_km.toFixed(1)} km away`
+                    : ""}
+                </p>
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${p.lat},${p.lng}`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center rounded-full bg-zinc-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-zinc-700 transition-colors"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-zinc-900 truncate">{p.name}</p>
-                    <p className="text-[11px] text-zinc-500 truncate">
-                      {p.category}
-                      {p.distance_km != null ? ` · ${p.distance_km < 1 ? `${Math.round(p.distance_km * 1000)}m` : `${p.distance_km.toFixed(1)}km`}` : ""}
-                    </p>
-                  </div>
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${p.lat},${p.lng}`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 inline-flex items-center rounded-full bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
-                  >
-                    Get directions
-                  </a>
-                </div>
-              ))}
-              {aiMessage && (
-                <p className="text-[11px] text-zinc-600 px-1">{aiMessage}</p>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-xl bg-white/90 border border-zinc-200 px-3 py-2 text-xs text-zinc-600 shadow-sm">
-              {aiMessage}
-            </div>
-          )}
+                  Get directions
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chat AI message banner fallback (when no place cards returned) */}
+      {aiMessage && highlightedPlaces.length === 0 && !showRecommend && (
+        <div className="absolute left-4 right-4 z-20 px-3 py-2 rounded-2xl bg-white/90 border border-zinc-200 text-xs text-zinc-600 shadow-sm"
+          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 56px)" }}>
+          {aiMessage}
         </div>
       )}
 

@@ -126,7 +126,23 @@ export function MapView({
   const handleLoad = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (map && !poiNoiseFilteredRef.current) {
-      const hiddenClasses = ["hospital", "lodging", "hotel", "motel", "hostel", "guest_house"];
+      const hiddenClasses = [
+        "hospital",
+        "medical",
+        "lodging",
+        "hotel",
+        "motel",
+        "hostel",
+        "guest_house",
+      ];
+      const hiddenSubclasses = [
+        "hospital",
+        "clinic",
+        "doctor",
+        "dentist",
+        "physiotherapist",
+        "veterinary",
+      ];
       const layers = map.getStyle()?.layers ?? [];
       for (const layer of layers) {
         if (layer.type !== "symbol") continue;
@@ -140,9 +156,17 @@ export function MapView({
           [
             "!",
             [
-              "in",
-              ["downcase", ["coalesce", ["get", "class"], ""]],
-              ["literal", hiddenClasses],
+              "any",
+              [
+                "in",
+                ["downcase", ["coalesce", ["get", "class"], ""]],
+                ["literal", hiddenClasses],
+              ],
+              [
+                "in",
+                ["downcase", ["coalesce", ["get", "subclass"], ""]],
+                ["literal", hiddenSubclasses],
+              ],
             ],
           ],
         ];
