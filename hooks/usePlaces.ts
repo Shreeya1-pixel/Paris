@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * usePlaces — fetches nearby places from /api/places/foursquare with:
+ * usePlaces — fetches nearby places from /api/places/foursquare + /api/places/geoapify with:
  *  - 500 ms debounce on lat/lng changes
  *  - 500 m movement threshold: skip re-fetch if user hasn't moved enough
  *  - React Query for client-side caching & deduplication
- *  - Graceful fallback when Foursquare key is absent (returns empty array)
+ *  - Graceful fallback to nearby DB / Gemini landmarks when third-party APIs are empty
  */
 
 import { useRef, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Place } from "@/types";
+import type { Place, PlaceCategory } from "@/types";
 import { haversineKm } from "@/lib/geo";
 
 const DEBOUNCE_MS = 500;
@@ -22,8 +22,8 @@ export interface UsePlacesResult {
   places: Place[];
   loading: boolean;
   error: string | null;
-  /** "foursquare" when the API is configured, "none" otherwise */
-  source: "foursquare" | "none";
+  /** Primary source used for places */
+  source: "foursquare" | "geoapify" | "nearby" | "gemini_landmarks" | "none";
 }
 
 export function usePlaces(
@@ -70,9 +70,82 @@ export function usePlaces(
         radius: String(radiusM),
         limit: "50",
       });
-      const res = await fetch(`/api/places/foursquare?${params}`);
-      if (!res.ok) throw new Error(`foursquare api ${res.status}`);
-      return res.json() as Promise<{ places: Place[]; source: string; configured?: boolean }>;
+      const [fsqRes, geoRes] = await Promise.all([
+        fetch(`/api/places/foursquare?${params}`),
+        fetch(`/api/places/geoapify?${params}`),
+      ]);
+      const fsqData = fsqRes.ok
+        ? ((await fsqRes.json()) as { places?: Place[]; source?: string })
+        : { places: [] as Place[] };
+      const geoData = geoRes.ok
+        ? ((await geoRes.json()) as { places?: Place[]; source?: string })
+        : { places: [] as Place[] };
+      const fsqPlaces = fsqData.places ?? [];
+      const geoPlaces = geoData.places ?? [];
+      if (fsqPlaces.length > 0 || geoPlaces.length > 0) {
+        const merged = new Map<string, Place>();
+        for (const p of [...fsqPlaces, ...geoPlaces]) merged.set(p.id, p);
+        const mergedPlaces = Array.from(merged.values())
+          .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
+          .slice(0, 30);
+        const source = fsqPlaces.length >= geoPlaces.length ? "foursquare" : "geoapify";
+        return { places: mergedPlaces, source };
+      }
+
+      // Fallback to app nearby places so the map still has local popups
+      const nearbyParams = new URLSearchParams({
+        lat: String(fetchPos.lat),
+        lng: String(fetchPos.lng),
+        radius: "12",
+        limit: "30",
+      });
+      const nearbyRes = await fetch(`/api/places/nearby?${nearbyParams}`);
+      if (!nearbyRes.ok) throw new Error(`places fallback api ${nearbyRes.status}`);
+      const nearbyData = (await nearbyRes.json()) as { places?: Place[] };
+      if ((nearbyData.places ?? []).length > 0) {
+        return { places: nearbyData.places ?? [], source: "nearby" as const };
+      }
+
+      // Final fallback: Gemini landmarks -> Place shape for map labels/popups.
+      const lmParams = new URLSearchParams({
+        lat: String(fetchPos.lat),
+        lng: String(fetchPos.lng),
+      });
+      const lmRes = await fetch(`/api/map/landmarks?${lmParams}`);
+      if (!lmRes.ok) return { places: [] as Place[], source: "none" as const };
+      const lmData = (await lmRes.json()) as {
+        landmarks?: { id: string; name: string; category: string; description?: string; lat: number; lng: number }[];
+      };
+      const asCategory = (raw: string): PlaceCategory => {
+        const c = String(raw).toLowerCase();
+        if (c.includes("cafe")) return "cafe";
+        if (c.includes("restaurant")) return "restaurant";
+        if (c.includes("bar")) return "bar";
+        if (c.includes("market")) return "market";
+        if (c.includes("park")) return "park";
+        if (c.includes("gallery") || c.includes("museum")) return "gallery";
+        return "bookshop";
+      };
+      const placesFromLandmarks: Place[] = (lmData.landmarks ?? []).map((l) => ({
+        id: `lm:${l.id}`,
+        name: l.name,
+        category: asCategory(l.category),
+        description: l.description ?? null,
+        address: null,
+        arrondissement: null,
+        lat: l.lat,
+        lng: l.lng,
+        image_url: null,
+        tags: [String(l.category).toLowerCase()],
+        opening_hours: null,
+        price_range: null,
+        website_url: null,
+        instagram_url: null,
+        is_featured: false,
+        created_at: new Date().toISOString(),
+        distance_km: haversineKm(fetchPos.lat, fetchPos.lng, l.lat, l.lng),
+      }));
+      return { places: placesFromLandmarks, source: "gemini_landmarks" as const };
     },
     enabled,
     staleTime: STALE_MS,
@@ -103,6 +176,6 @@ export function usePlaces(
     places: data?.places ?? [],
     loading: isLoading,
     error: isError ? "Failed to load nearby places" : null,
-    source: (data?.source as "foursquare") ?? "none",
+    source: data?.source ?? "none",
   };
 }

@@ -3,20 +3,20 @@ import { getGeminiApiKey } from "@/lib/geminiEnv";
 
 export const dynamic = "force-dynamic";
 
-const SYSTEM = `You are a local place expert. Given GPS coordinates, identify the top 5 must-visit landmarks or shops within 2km.
+const SYSTEM = `You are a local place expert. Given GPS coordinates, identify the top 20 must-visit landmarks or shops within 12km.
 Return ONLY valid JSON:
 {"landmarks":[{"name":"Name","category":"landmark","description":"Max 10 words.","lat":0.0,"lng":0.0}]}
 Rules:
 - Keep descriptions SHORT (max 10 words each).
-- lat/lng: WGS84 decimal degrees, within 2km.
+- lat/lng: WGS84 decimal degrees, within 12km.
 - category: landmark, shop, restaurant, cafe, temple, park, museum, market, or monument.
-- Exactly 5 items.`;
+- Return 15-20 items when possible.`;
 
 async function callGeminiLandmarks(lat: number, lng: number): Promise<string> {
   const key = getGeminiApiKey();
   if (!key) throw new Error("GEMINI_API_KEY not set");
 
-  const user = `The user is at latitude ${lat}, longitude ${lng}. What are the top 5 must-visit places within 2km?`;
+  const user = `The user is at latitude ${lat}, longitude ${lng}. What are the top 20 must-visit places within 12km?`;
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
@@ -27,7 +27,7 @@ async function callGeminiLandmarks(lat: number, lng: number): Promise<string> {
         systemInstruction: { parts: [{ text: SYSTEM }] },
         contents: [{ role: "user", parts: [{ text: user }] }],
         generationConfig: {
-          maxOutputTokens: 2048,
+          maxOutputTokens: 4096,
           temperature: 0.25,
         },
       }),
@@ -97,8 +97,8 @@ export async function GET(req: NextRequest) {
           Number.isFinite(L.lat) &&
           Number.isFinite(L.lng)
       )
-      .filter((L) => haversineM(lat, lng, L.lat, L.lng) <= 15000)
-      .slice(0, 5)
+      .filter((L) => haversineM(lat, lng, L.lat, L.lng) <= 18000)
+      .slice(0, 20)
       .map((L, i) => ({
         id: `gemini-landmark-${i}-${L.name.slice(0, 12).replace(/\s/g, "-")}`,
         name: L.name,

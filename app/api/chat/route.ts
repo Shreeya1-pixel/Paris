@@ -177,7 +177,7 @@ Return ONLY valid JSON (no markdown fences):
 
 Rules for placeIds:
 - Only include IDs that appear in the "Nearby places catalogue" provided in the user message.
-- Pick 2-5 of the most relevant places for the query. Omit the field if none match.
+- Pick 3-6 of the most relevant places for the query when possible. Omit the field if none match.
 - Do NOT invent IDs. Only use IDs from the catalogue exactly as given.
 `.trim();
 
@@ -375,9 +375,24 @@ export async function POST(req: NextRequest) {
     try {
       const parsed = JSON.parse(cleaned) as { message?: string; placeIds?: string[] };
       msgText = parsed.message || cleaned.slice(0, 500);
-      pickedPlaceIds = Array.isArray(parsed.placeIds) ? parsed.placeIds.slice(0, 5) : [];
+      pickedPlaceIds = Array.isArray(parsed.placeIds) ? parsed.placeIds.slice(0, 6) : [];
     } catch {
       msgText = cleaned.slice(0, 500) || "Here's what I found near you.";
+    }
+
+    // Ensure users get strong local suggestions: if Gemini returned <3 IDs but we
+    // have local catalogue rows, backfill with nearest places.
+    if (pickedPlaceIds.length < 3 && nearbyPlaceRows.length > 0) {
+      const nearestFallbackIds = [...nearbyPlaceRows]
+        .sort((a, b) => {
+          const da = (a.lat - lat) * (a.lat - lat) + (a.lng - lng) * (a.lng - lng);
+          const db = (b.lat - lat) * (b.lat - lat) + (b.lng - lng) * (b.lng - lng);
+          return da - db;
+        })
+        .slice(0, 6)
+        .map((p) => p.id);
+      const merged = [...pickedPlaceIds, ...nearestFallbackIds];
+      pickedPlaceIds = [...new Set(merged)].slice(0, 6);
     }
 
     // ── Hydrate picked place IDs into full place objects ─────────────────────

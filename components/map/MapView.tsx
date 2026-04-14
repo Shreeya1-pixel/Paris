@@ -7,7 +7,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Event, GeminiMapLandmark, NearbyMapItem, Place, ParisCategory } from "@/types";
 import { EventPin } from "./EventPin";
 import { PlaceMapLabel } from "./PlaceMapLabel";
-import { clusterPlaces, clusterCellForZoom, LABEL_ZOOM_THRESHOLD, CLUSTER_ZOOM_THRESHOLD } from "@/utils/mapHelpers";
+import { clusterPlaces, clusterCellForZoom, CLUSTER_ZOOM_THRESHOLD } from "@/utils/mapHelpers";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
@@ -195,7 +195,7 @@ export function MapView({
       setSpotlightOpen([]);
       return;
     }
-    setSpotlightOpen(spotlightPlaceIds.slice(0, 5));
+    setSpotlightOpen(spotlightPlaceIds.slice(0, 20));
     const t = window.setTimeout(() => {
       setSpotlightOpen([]);
       onSpotlightConsumed?.();
@@ -256,11 +256,6 @@ export function MapView({
     const cellDeg = clusterCellForZoom(mapZoom);
     return clusterPlaces(places, cellDeg);
   }, [places, mapZoom]);
-
-  // ── Label expansion logic (zoom-aware) ───────────────────────────────────
-  // zoom >= LABEL_ZOOM_THRESHOLD → show all persistent labels
-  // zoom < LABEL_ZOOM_THRESHOLD  → only spotlit places show labels
-  const showAllLabels = mapZoom >= LABEL_ZOOM_THRESHOLD;
 
   const bubbleEventLabel = useCallback((item: NearbyMapItem) => {
     const cat = String(item.category).toLowerCase();
@@ -386,12 +381,6 @@ export function MapView({
       {foursquarePopups
         .filter((p) => fsqPopupIds.includes(p.id))
         .map((p) => {
-          const catEmoji: Record<string, string> = {
-            cafe: "☕", restaurant: "🍽️", bar: "🍷", boulangerie: "🥐",
-            gallery: "🖼️", park: "🌳", library: "📖", market: "🛍️",
-            club: "🌙", bookshop: "📚",
-          };
-          const emoji = catEmoji[p.category] ?? "📍";
           const distLabel =
             p.distance_km != null
               ? p.distance_km < 1
@@ -412,7 +401,6 @@ export function MapView({
             >
               <div className="w-[240px] max-w-[78vw]">
                 <div className="flex items-start gap-2">
-                  <span className="text-xl leading-none mt-0.5 shrink-0">{emoji}</span>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-zinc-900 leading-tight">{p.name}</p>
                     <p className="text-[10px] uppercase tracking-wide text-zinc-400 mt-0.5">{p.category}</p>
@@ -428,7 +416,7 @@ export function MapView({
                 </div>
                 {distLabel && (
                   <p className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-1">
-                    📍 {distLabel}
+                    {distLabel}
                     {p.arrondissement ? ` · ${p.arrondissement}` : ""}
                   </p>
                 )}
@@ -452,11 +440,6 @@ export function MapView({
       {ticketmasterEvents
         .filter((e) => tmPopupIds.includes(e.id))
         .map((e) => {
-          const catEmoji: Record<string, string> = {
-            music: "🎵", culture: "🎭", sport: "⚽", nightlife: "🌙",
-            art: "🖼️", market: "🛍️", outdoor: "🌳",
-          };
-          const emoji = catEmoji[e.category] ?? "🎟️";
           const distLabel =
             e.distance_km != null
               ? e.distance_km < 1
@@ -482,13 +465,12 @@ export function MapView({
             >
               <div className="w-[260px] max-w-[80vw]">
                 <div className="flex items-start gap-2">
-                  <span className="text-xl leading-none mt-0.5 shrink-0">{emoji}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-zinc-900 leading-snug line-clamp-2">
                       {e.title}
                     </p>
                     {e.location_name && (
-                      <p className="text-[10px] text-zinc-500 mt-0.5 truncate">📍 {e.location_name}</p>
+                      <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{e.location_name}</p>
                     )}
                   </div>
                   <button
@@ -519,7 +501,7 @@ export function MapView({
                     rel="noopener noreferrer"
                     className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
                   >
-                    🎟️ Get tickets
+                    Get tickets
                   </a>
                 ) : (
                   <a
@@ -602,7 +584,7 @@ export function MapView({
         const expanded =
           pulsing ||
           selected ||
-          (showAllLabels && persistentLabelPlaceIds.includes(place.id));
+          persistentLabelPlaceIds.includes(place.id);
         return (
           <Marker
             key={place.id}
