@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Navigation, Users } from "lucide-react";
+import { Navigation, Users } from "lucide-react";
 import { motion } from "framer-motion";
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageToggle } from "@/components/LanguageToggle";
@@ -14,28 +13,11 @@ interface MapTopChromeProps {
 }
 
 export function MapTopChrome({ cityLabel, onRecenter }: MapTopChromeProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useLanguage();
-  const normalizedLabel = cityLabel?.trim() ?? "";
-  const label = normalizedLabel.length > 0 ? normalizedLabel : t("map.nearYou");
 
   return (
     <>
       <header className="absolute top-0 left-0 right-0 z-20 flex items-start justify-between px-4 pt-safe-top pb-2 pointer-events-none gap-2">
-        <button
-          type="button"
-          onClick={() => setMenuOpen(!menuOpen)}
-          className="pointer-events-auto text-left rounded-2xl px-3 py-2 bg-white/80 backdrop-blur-md border border-white/60 shadow-sm shrink-0"
-        >
-          <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
-            {t("map.location")}
-          </p>
-          <p className="text-sm font-semibold text-zinc-900 flex items-center gap-0.5">
-            {label}
-            <ChevronDown className="w-4 h-4 text-zinc-500" />
-          </p>
-        </button>
-
         <div className="pointer-events-auto flex flex-col items-end gap-2 shrink-0">
           <LanguageToggle size="sm" layoutId="lang-pill-map" />
         </div>
