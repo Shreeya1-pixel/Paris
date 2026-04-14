@@ -138,14 +138,22 @@ export default function MapPage() {
       return;
     }
 
+    const fallbackFromNearby = (): string | null => {
+      const fromPlace =
+        nearbyRes?.places?.find((p) => (p.arrondissement ?? "").trim())?.arrondissement ??
+        nearbyRes?.places?.find((p) => (p.address ?? "").trim())?.address;
+      const fromEvent = nearbyRes?.events?.find((e) => (e.arrondissement ?? "").trim())?.arrondissement;
+      const picked = (fromPlace ?? fromEvent ?? "").trim();
+      return picked.length > 0 ? picked : null;
+    };
+
     const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
     if (!token) {
-      setLocationLabel(`${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`);
+      setLocationLabel(fallbackFromNearby());
       return;
     }
 
     const controller = new AbortController();
-    const fallback = `${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`;
 
     const loadLocationLabel = async () => {
       const resolveViaMapbox = async (): Promise<string | null> => {
@@ -215,21 +223,26 @@ export default function MapPage() {
 
       try {
         const mapboxLabel = await resolveViaMapbox();
-        if (mapboxLabel) {
-          setLocationLabel(mapboxLabel);
+        const normalizedMapbox = mapboxLabel?.trim() ?? "";
+        if (normalizedMapbox.length > 0) {
+          setLocationLabel(normalizedMapbox);
           return;
         }
         const nominatimLabel = await resolveViaNominatim();
-        const label = nominatimLabel ?? fallback;
-        setLocationLabel(label);
+        const normalizedNominatim = nominatimLabel?.trim() ?? "";
+        if (normalizedNominatim.length > 0) {
+          setLocationLabel(normalizedNominatim);
+          return;
+        }
+        setLocationLabel(fallbackFromNearby());
       } catch {
-        if (!controller.signal.aborted) setLocationLabel(fallback);
+        if (!controller.signal.aborted) setLocationLabel(fallbackFromNearby());
       }
     };
 
     void loadLocationLabel();
     return () => controller.abort();
-  }, [resolvedLat, resolvedLng, lang]);
+  }, [resolvedLat, resolvedLng, lang, nearbyRes?.places, nearbyRes?.events]);
 
   const { data: landmarkRes } = useQuery({
     queryKey: ["gemini-landmarks", debounced.lat, debounced.lng],
