@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Plus, Send, Sparkles, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { cn } from "@/lib/utils";
 import type { NearbyPlaceFilter } from "@/components/map/MapPlaceFilterBar";
@@ -43,6 +43,8 @@ interface MapBottomChromeProps {
   remainingAssistant?: number | null;
   /** Show fallback hint (rate limit, API cap, location blocked). */
   showManualSearchHint?: boolean;
+  /** Called when user taps upgrade CTA after limit is reached. */
+  onUpgradeNow?: () => Promise<boolean> | boolean;
 }
 
 export function MapBottomChrome({
@@ -55,10 +57,20 @@ export function MapBottomChrome({
   onAssistantChip,
   remainingAssistant,
   showManualSearchHint,
+  onUpgradeNow,
 }: MapBottomChromeProps) {
   const { t } = useLanguage();
   const [chipsVisible, setChipsVisible] = useState(true);
   const limitReached = remainingAssistant === 0;
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeSaved, setUpgradeSaved] = useState(false);
+
+  useEffect(() => {
+    if (!limitReached) {
+      setUpgradeLoading(false);
+      setUpgradeSaved(false);
+    }
+  }, [limitReached]);
 
   const togglePlace = (id: NearbyPlaceFilter) => {
     if (!onPlaceFiltersChange) return;
@@ -143,18 +155,31 @@ export function MapBottomChrome({
           )}
         </AnimatePresence>
 
-        {remainingAssistant === 0 && (
-          <p className="text-[10px] text-zinc-600 font-sans px-1 text-center">
-            {t("map.assistantLimitReset")}
-          </p>
-        )}
-
         {showManualSearchHint && (
           <div className="rounded-xl bg-white/90 border border-zinc-200/80 px-3 py-2 text-center shadow-sm">
             <p className="text-[11px] text-zinc-700 font-sans">
-              {limitReached ? t("map.assistantLimitReset") : t("map.manualSearchHint")}
+              {limitReached ? t("map.limitUpgradeLine") : t("map.manualSearchHint")}
             </p>
-            {!limitReached && (
+            {limitReached ? (
+              <button
+                type="button"
+                disabled={upgradeLoading || upgradeSaved}
+                onClick={async () => {
+                  if (!onUpgradeNow || upgradeLoading || upgradeSaved) return;
+                  setUpgradeLoading(true);
+                  const ok = await onUpgradeNow();
+                  setUpgradeSaved(ok);
+                  setUpgradeLoading(false);
+                }}
+                className="text-[11px] font-semibold text-amber-800 mt-1 inline-block underline-offset-2 hover:underline disabled:opacity-55"
+              >
+                {upgradeLoading
+                  ? t("map.upgradeSaving")
+                  : upgradeSaved
+                    ? t("map.upgradeSaved")
+                    : t("map.upgradeNow")}
+              </button>
+            ) : (
               <Link
                 href="/discover"
                 className="text-[11px] font-semibold text-amber-800 mt-1 inline-block underline-offset-2 hover:underline"

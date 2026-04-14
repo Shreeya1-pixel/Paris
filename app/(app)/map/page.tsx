@@ -520,6 +520,18 @@ export default function MapPage() {
     void submitMapChat(searchQuery);
   }, [searchQuery, submitMapChat]);
 
+  const handleUpgradeNow = useCallback(async () => {
+    try {
+      const res = await fetch("/api/upgrade-interest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     if (locStatus === "denied" || locationError) setManualSearchHint(true);
   }, [locStatus, locationError]);
@@ -765,6 +777,7 @@ export default function MapPage() {
         onAssistantChip={(q) => void submitMapChat(q)}
         remainingAssistant={assistantRemaining}
         showManualSearchHint={manualSearchHint}
+        onUpgradeNow={handleUpgradeNow}
       />
 
       {detailEvent && (

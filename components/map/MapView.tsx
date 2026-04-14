@@ -350,8 +350,10 @@ export function MapView({
               onEventSelect(null);
               onPlaceSelect?.(null);
               setLandmarkPopupIds((prev) =>
-                prev.includes(L.id) ? prev.filter((id) => id !== L.id) : [...prev, L.id]
+                prev[0] === L.id ? [] : [L.id]
               );
+              setFsqPopupIds([]);
+              setTmPopupIds([]);
             }}
           >
             <div
@@ -575,10 +577,10 @@ export function MapView({
               lastMarkerClickMs.current = Date.now();
               if (event.id.startsWith("tm-")) {
                 setTmPopupIds((prev) =>
-                  prev.includes(event.id)
-                    ? prev.filter((id) => id !== event.id)
-                    : [event.id]
+                  prev[0] === event.id ? [] : [event.id]
                 );
+                setLandmarkPopupIds([]);
+                setFsqPopupIds([]);
                 onEventSelect(null);
                 return;
               }
@@ -622,10 +624,10 @@ export function MapView({
               onEventSelect(null);
               onPlaceSelect?.(place);
               setFsqPopupIds((prev) =>
-                prev.includes(place.id)
-                  ? prev.filter((id) => id !== place.id)
-                  : [place.id]
+                prev[0] === place.id ? [] : [place.id]
               );
+              setLandmarkPopupIds([]);
+              setTmPopupIds([]);
             }}
           >
             <PlaceMapLabel

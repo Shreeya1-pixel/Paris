@@ -107,6 +107,17 @@ CREATE TABLE IF NOT EXISTS public.event_attendees (
 CREATE INDEX IF NOT EXISTS idx_event_attendees_event ON public.event_attendees(event_id);
 CREATE INDEX IF NOT EXISTS idx_event_attendees_user  ON public.event_attendees(user_id);
 
+-- ─── Upgrade Interest Clicks ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.upgrade_interest (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  email       TEXT UNIQUE NOT NULL,
+  source      TEXT NOT NULL DEFAULT 'chatbot_limit',
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_upgrade_interest_created_at ON public.upgrade_interest(created_at);
+
 -- ─── RLS ──────────────────────────────────────────────────────────────────────
 ALTER TABLE public.users           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.events          ENABLE ROW LEVEL SECURITY;
@@ -114,6 +125,7 @@ ALTER TABLE public.paris_places    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.saved_events    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.saved_places    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_attendees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.upgrade_interest ENABLE ROW LEVEL SECURITY;
 
 -- users
 CREATE POLICY "Users are viewable by everyone"   ON public.users FOR SELECT USING (true);
@@ -148,6 +160,10 @@ CREATE POLICY "Users can delete own saved places" ON public.saved_places FOR DEL
 CREATE POLICY "Attendees viewable by everyone" ON public.event_attendees FOR SELECT USING (true);
 CREATE POLICY "Users can join events"          ON public.event_attendees FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can leave events"         ON public.event_attendees FOR DELETE USING (auth.uid() = user_id);
+
+-- upgrade_interest
+CREATE POLICY "Users can insert own upgrade interest" ON public.upgrade_interest
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- ─── Auto-create user row on signup ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.handle_new_user()
