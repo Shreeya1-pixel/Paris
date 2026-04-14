@@ -12,7 +12,7 @@ interface MapTopChromeProps {
   onRecenter?: () => void;
 }
 
-export function MapTopChrome({ cityLabel, onRecenter }: MapTopChromeProps) {
+export function MapTopChrome({ onRecenter }: MapTopChromeProps) {
   const { t } = useLanguage();
 
   return (
