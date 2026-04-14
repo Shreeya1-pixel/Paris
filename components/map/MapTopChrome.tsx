@@ -16,7 +16,8 @@ interface MapTopChromeProps {
 export function MapTopChrome({ cityLabel, onRecenter }: MapTopChromeProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useLanguage();
-  const label = cityLabel ?? t("map.nearYou");
+  const normalizedLabel = cityLabel?.trim() ?? "";
+  const label = normalizedLabel.length > 0 ? normalizedLabel : t("map.nearYou");
 
   return (
     <>

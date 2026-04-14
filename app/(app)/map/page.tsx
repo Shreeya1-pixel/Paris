@@ -139,11 +139,13 @@ export default function MapPage() {
     }
 
     const fallbackFromNearby = (): string | null => {
-      const fromPlace =
-        nearbyRes?.places?.find((p) => (p.arrondissement ?? "").trim())?.arrondissement ??
-        nearbyRes?.places?.find((p) => (p.address ?? "").trim())?.address;
-      const fromEvent = nearbyRes?.events?.find((e) => (e.arrondissement ?? "").trim())?.arrondissement;
-      const picked = (fromPlace ?? fromEvent ?? "").trim();
+      const fromPlaceArr = nearbyRes?.places?.find((p) => (p.arrondissement ?? "").trim())?.arrondissement;
+      const fromPlaceAddressHead = nearbyRes?.places
+        ?.find((p) => (p.address ?? "").trim())
+        ?.address?.split(",")[0];
+      const fromEventArr = nearbyRes?.events?.find((e) => (e.arrondissement ?? "").trim())?.arrondissement;
+      const fromEventLocation = nearbyRes?.events?.find((e) => (e.location_name ?? "").trim())?.location_name;
+      const picked = (fromPlaceArr ?? fromPlaceAddressHead ?? fromEventArr ?? fromEventLocation ?? "").trim();
       return picked.length > 0 ? picked : null;
     };
 
@@ -673,7 +675,7 @@ export default function MapPage() {
       </div>
 
       <MapTopChrome
-        cityLabel={locationLabel ?? undefined}
+        cityLabel={locationLabel?.trim() || fallbackFromNearby() || undefined}
         onRecenter={handleRecenter}
       />
 
