@@ -32,9 +32,7 @@ import {
 } from "@/lib/ai/recommendCache";
 import type { RecommendItem, Vibe } from "@/lib/ai/recommendTypes";
 import type { Event, Place } from "@/types";
-import { ALL_SPOTS } from "@/lib/localKnowledgeBase";
 import { getGeminiApiKey } from "@/lib/geminiEnv";
-import { haversineKm as _haversineKm } from "@/lib/geo";
 
 export const dynamic = "force-dynamic";
 
@@ -207,7 +205,7 @@ async function callGemini(prompt: string): Promise<GeminiItem[]> {
   if (!key) throw new Error("GEMINI_API_KEY not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -322,36 +320,14 @@ export async function POST(req: NextRequest) {
     places = wide.places;
   }
 
-  // ── 4. If still nothing nearby — seed from local KB ──────────────────────
-  // This ensures the AI always has a catalogue to recommend from, even when
-  // the user is far from Paris (where Supabase has no data).
+  // Keep this endpoint location-strict: never inject Paris KB globally.
   if (events.length === 0 && places.length === 0) {
-    const kbPlaces: Place[] = ALL_SPOTS.map((s) => ({
-      id: s.id,
-      name: s.name,
-      category: (s.category === "museum" || s.category === "landmark" ? "gallery" : s.category) as Place["category"],
-      description: s.description,
-      address: s.address,
-      arrondissement: s.arrondissement,
-      lat: s.lat,
-      lng: s.lng,
-      image_url: s.image_url,
-      tags: s.tags,
-      opening_hours: s.opening_hours,
-      price_range: null,
-      website_url: s.website_url,
-      instagram_url: s.instagram_url,
-      is_featured: s.is_featured,
-      created_at: s.created_at,
-      distance_km: _haversineKm(lat, lng, s.lat, s.lng),
-    }));
-    // Sort by distance, boost featured
-    kbPlaces.sort((a, b) => {
-      const scoreA = (a.distance_km ?? 99) - (a.is_featured ? 5 : 0);
-      const scoreB = (b.distance_km ?? 99) - (b.is_featured ? 5 : 0);
-      return scoreA - scoreB;
+    consumeRecommendQuota(userKey);
+    return NextResponse.json({
+      items: [] as RecommendItem[],
+      message: lang === "fr" ? "Aucune suggestion locale pour l'instant." : "No nearby suggestions right now.",
+      source: "fallback",
     });
-    places = kbPlaces;
   }
 
   // ── 5. Check cost cap → use fallback if exceeded ─────────────────────────
@@ -412,9 +388,6 @@ export async function POST(req: NextRequest) {
   // ── 10. Hydrate Gemini IDs with full DB rows (or KB rows) ────────────────
   const evMap = new Map(events.map((e) => [e.id, e]));
   const plMap = new Map(places.map((p) => [p.id, p]));
-  // Also build KB id map for fallback hydration
-  const kbMap = new Map(ALL_SPOTS.map((s) => [s.id, s]));
-
   const items: RecommendItem[] = geminiItems
     .slice(0, 5)
     .map((gi): RecommendItem | null => {
@@ -449,22 +422,6 @@ export async function POST(req: NextRequest) {
           arrondissement: pl.arrondissement,
           distance_km: pl.distance_km,
           image_url: pl.image_url,
-        };
-      }
-      // KB fallback hydration
-      const kb = kbMap.get(id);
-      if (kb) {
-        return {
-          id: kb.id,
-          title: gi.title ?? kb.name,
-          description: gi.description ?? kb.description ?? "",
-          category: kb.category === "museum" || kb.category === "landmark" ? "gallery" : kb.category,
-          type: "place",
-          lat: kb.lat,
-          lng: kb.lng,
-          arrondissement: kb.arrondissement,
-          distance_km: _haversineKm(lat, lng, kb.lat, kb.lng),
-          image_url: null,
         };
       }
       return null;

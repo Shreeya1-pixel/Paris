@@ -11,7 +11,7 @@ import type { NearbyPlaceFilter } from "@/components/map/MapPlaceFilterBar";
 import { EventDetailModal } from "@/components/map/EventDetailModal";
 import { PlaceDetailSheet } from "@/components/discover/PlaceDetailSheet";
 import { AiRecommendPanel } from "@/components/map/AiRecommendPanel";
-import type { Event, NearbyMapItem, Place } from "@/types";
+import type { Event, GeminiMapLandmark, NearbyMapItem, Place } from "@/types";
 import { MapLoadingFallback } from "@/components/map/MapLoadingFallback";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useUserLocation } from "@/hooks/useUserLocation";
@@ -20,7 +20,6 @@ import { usePlaces } from "@/hooks/usePlaces";
 import { useSavedEventIds } from "@/hooks/useSavedEvents";
 import { useSavedPlaceIds, useSavedPlaceRows } from "@/hooks/useSavedPlaces";
 import { useAiRecommend } from "@/hooks/useAiRecommend";
-import type { RecommendItem } from "@/lib/ai/recommendTypes";
 
 const MapView = dynamic(
   () => import("@/components/map/MapView").then((m) => ({ default: m.MapView })),
@@ -33,13 +32,9 @@ const MapView = dynamic(
 const NEARBY_STALE_MS = 3 * 60 * 1000;
 const NEARBY_RADIUS_KM = 6;
 
-const PARIS = { lat: 48.8566, lng: 2.3522 };
-
 export default function MapPage() {
   const { lang } = useLanguage();
   const [liveTrack, setLiveTrack] = useState(false);
-  // Dev-only: override GPS with a hardcoded location (Paris by default)
-  const [devOverride, setDevOverride] = useState<{ lat: number; lng: number } | null>(null);
   const {
     lat: gpsLat,
     lng: gpsLng,
@@ -50,14 +45,9 @@ export default function MapPage() {
     refresh,
   } = useUserLocation({ watch: liveTrack });
 
-  // Effective coords: dev override wins over GPS
-  const lat = devOverride?.lat ?? gpsLat;
-  const lng = devOverride?.lng ?? gpsLng;
-  const coords = useMemo(
-    () => (devOverride ? { lat: devOverride.lat, lng: devOverride.lng } : gpsCoords),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [devOverride?.lat, devOverride?.lng, gpsCoords],
-  );
+  const lat = gpsLat;
+  const lng = gpsLng;
+  const coords = useMemo(() => gpsCoords, [gpsCoords]);
   const resolvedLat = lat;
   const resolvedLng = lng;
   const debounced = useDebouncedCoords(resolvedLat ?? 0, resolvedLng ?? 0, 750);
@@ -77,6 +67,9 @@ export default function MapPage() {
   const [placeFilters, setPlaceFilters] = useState<NearbyPlaceFilter[]>([]);
   const [spotlightPlaceIds, setSpotlightPlaceIds] = useState<string[]>([]);
   const [flyToUserOnce, setFlyToUserOnce] = useState<{ lat: number; lng: number } | null>(null);
+  const [assistantSessionId, setAssistantSessionId] = useState("");
+  const [assistantRemaining, setAssistantRemaining] = useState<number | null>(null);
+  const [manualSearchHint, setManualSearchHint] = useState(false);
 
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownToUser = useRef(false);
@@ -88,6 +81,14 @@ export default function MapPage() {
 
   // ── Foursquare live places (with 500 m threshold + debounce) ─────────────
   const { places: foursquarePlaces } = usePlaces(lat, lng, 2000);
+
+  // Top 7 nearest Foursquare places to auto-show as map popups
+  const foursquarePopups = useMemo(() => {
+    if (!lat || !lng || foursquarePlaces.length === 0) return [];
+    return [...foursquarePlaces]
+      .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
+      .slice(0, 7);
+  }, [foursquarePlaces, lat, lng]);
 
   // ── Unified nearby feed (events + places) ────────────────────────────────
   const { data: nearbyRes } = useQuery({
@@ -113,12 +114,104 @@ export default function MapPage() {
     console.log("[Map] nearby items:", nearbyRes?.items?.length ?? 0);
   }, [nearbyRes?.items]);
 
-  const allEvents = useMemo(() => {
-    return (nearbyRes?.events ?? []).map((e) => ({
-      ...e,
-      is_saved: savedEventIds.has(e.id),
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let id = sessionStorage.getItem("ow_assistant_sid");
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("ow_assistant_sid", id);
+    }
+    setAssistantSessionId(id);
+  }, []);
+
+  const { data: landmarkRes } = useQuery({
+    queryKey: ["gemini-landmarks", debounced.lat, debounced.lng],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/map/landmarks?lat=${encodeURIComponent(String(debounced.lat))}&lng=${encodeURIComponent(String(debounced.lng))}`
+      );
+      if (!res.ok) return { landmarks: [] as GeminiMapLandmark[] };
+      return res.json() as Promise<{ landmarks: GeminiMapLandmark[] }>;
+    },
+    staleTime: 12 * 60 * 1000,
+    enabled:
+      resolvedLat !== null &&
+      resolvedLng !== null &&
+      debounced.lat !== 0 &&
+      debounced.lng !== 0,
+  });
+
+  const geminiLandmarks = landmarkRes?.landmarks ?? [];
+
+  const { data: liveDiscoverRes } = useQuery({
+    queryKey: ["discover-live", debounced.lat, debounced.lng],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/discover/live?lat=${encodeURIComponent(String(debounced.lat))}&lng=${encodeURIComponent(String(debounced.lng))}`
+      );
+      if (!res.ok) return { events: [] as Event[] };
+      return res.json() as Promise<{ events: Event[] }>;
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled:
+      resolvedLat !== null &&
+      resolvedLng !== null &&
+      debounced.lat !== 0 &&
+      debounced.lng !== 0,
+  });
+
+  const discoverContextEvents = useMemo(() => {
+    type CtxEv = {
+      id: string;
+      title: string;
+      start_time: string;
+      source: "app" | "ticketmaster" | "live";
+      ticket_url: string | null;
+    };
+    const fromApp: CtxEv[] = (nearbyRes?.events ?? []).slice(0, 22).map((e) => ({
+      id: e.id,
+      title: e.title,
+      start_time: e.start_time,
+      source: "app",
+      ticket_url: e.ticket_url,
     }));
-  }, [nearbyRes?.events, savedEventIds]);
+    const fromLive: CtxEv[] = (liveDiscoverRes?.events ?? []).slice(0, 22).map((e) => ({
+      id: e.id,
+      title: e.title,
+      start_time: e.start_time,
+      source: e.id.startsWith("tm-") ? "ticketmaster" : "live",
+      ticket_url: e.ticket_url,
+    }));
+    const seen = new Set<string>();
+    const merged: CtxEv[] = [];
+    for (const x of [...fromApp, ...fromLive]) {
+      if (seen.has(x.id)) continue;
+      seen.add(x.id);
+      merged.push(x);
+    }
+    return merged;
+  }, [nearbyRes?.events, liveDiscoverRes?.events]);
+
+  const allEvents = useMemo(() => {
+    const byId = new Map<string, Event>();
+    for (const e of nearbyRes?.events ?? []) {
+      byId.set(e.id, { ...e, is_saved: savedEventIds.has(e.id) });
+    }
+    for (const e of liveDiscoverRes?.events ?? []) {
+      if (!byId.has(e.id)) {
+        byId.set(e.id, { ...e, is_saved: savedEventIds.has(e.id) });
+      }
+    }
+    return Array.from(byId.values());
+  }, [nearbyRes?.events, liveDiscoverRes?.events, savedEventIds]);
+
+  // Top 5 nearest Ticketmaster events for map popups
+  const ticketmasterMapEvents = useMemo(() => {
+    return [...(liveDiscoverRes?.events ?? [])]
+      .filter((e) => e.id.startsWith("tm-") && e.lat && e.lng)
+      .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
+      .slice(0, 5);
+  }, [liveDiscoverRes?.events]);
 
   const mapPlacesRaw = useMemo(() => {
     const byId = new Map<string, Place>();
@@ -234,47 +327,75 @@ export default function MapPage() {
     []
   );
 
-  const handleSearchSubmit = useCallback(async () => {
-    if (!searchQuery.trim() || searchLoading) return;
-    setSearchLoading(true);
-    setAiMessage("");
-    // Close recommend panel when chat is used
-    setRecommendOpen(false);
-    recommend.clear();
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: searchQuery,
-          lat: coords.lat,
-          lng: coords.lng,
-          lang,
-        }),
-      });
-      const data = await res.json();
-      if (data.events !== undefined) {
-        handleChatResult(data);
-        setSearchQuery("");
+  const submitMapChat = useCallback(
+    async (rawQuery: string) => {
+      const q = rawQuery.trim();
+      if (!q || searchLoading || !assistantSessionId) return;
+      const hasCoords = Number.isFinite(coords.lat) && Number.isFinite(coords.lng) && coords.lat !== 0 && coords.lng !== 0;
+      if (!hasCoords) {
+        setAiMessage("Enable location to get nearby suggestions.");
+        setManualSearchHint(true);
+        return;
       }
-    } catch {
-      /* ignore */
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [searchQuery, searchLoading, coords, handleChatResult, lang, recommend]);
-
-  // ── Chip click → call /api/ai/recommend directly ─────────────────────────
-  const handleChipSelect = useCallback(
-    async (vibe: string) => {
-      setRecommendOpen(true);
+      setSearchLoading(true);
       setAiMessage("");
-      setHighlightedEventIds(new Set());
-      setHighlightedPlaces([]);
-      await recommend.fetch(coords.lat, coords.lng, vibe as never, lang);
+      setManualSearchHint(false);
+      setRecommendOpen(false);
+      recommend.clear();
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: q,
+            lat: coords.lat,
+            lng: coords.lng,
+            lang,
+            mode: "assistant",
+            sessionId: assistantSessionId,
+            discoverContext: { events: discoverContextEvents },
+          }),
+        });
+        const data = (await res.json()) as {
+          events?: unknown[];
+          places?: unknown[];
+          message?: string;
+          manualSearch?: boolean;
+          remainingAssistant?: number;
+        };
+        if (data.events !== undefined) {
+          handleChatResult(data as Parameters<typeof handleChatResult>[0]);
+          setSearchQuery("");
+          if (typeof data.remainingAssistant === "number") {
+            setAssistantRemaining(data.remainingAssistant);
+          }
+          if (data.manualSearch) setManualSearchHint(true);
+        }
+      } catch {
+        setManualSearchHint(true);
+      } finally {
+        setSearchLoading(false);
+      }
     },
-    [coords.lat, coords.lng, lang, recommend]
+    [
+      searchLoading,
+      assistantSessionId,
+      coords.lat,
+      coords.lng,
+      lang,
+      discoverContextEvents,
+      handleChatResult,
+      recommend,
+    ]
   );
+
+  const handleSearchSubmit = useCallback(() => {
+    void submitMapChat(searchQuery);
+  }, [searchQuery, submitMapChat]);
+
+  useEffect(() => {
+    if (locStatus === "denied" || locationError) setManualSearchHint(true);
+  }, [locStatus, locationError]);
 
   // ── When user clicks a recommendation card ────────────────────────────────
   const handleRecommendItemClick = useCallback(
@@ -296,12 +417,68 @@ export default function MapPage() {
           setDetailEvent(ev);
           setSelectedEvent(ev);
           setDetailPlace(null);
+          return;
+        }
+        if (item.lat != null && item.lng != null) {
+          setRecommendOpen(false);
+          setDetailEvent({
+            id: item.id,
+            created_by: "system",
+            title: item.title,
+            description: item.description,
+            category: "culture",
+            vibe_tags: [],
+            start_time: item.start_time ?? new Date().toISOString(),
+            end_time: null,
+            location_name: item.arrondissement ?? null,
+            arrondissement: item.arrondissement ?? null,
+            address: null,
+            lat: item.lat,
+            lng: item.lng,
+            image_url: item.image_url ?? null,
+            ticket_url: null,
+            is_free: item.is_free ?? false,
+            price: null,
+            max_attendees: null,
+            attendee_count: 0,
+            source: "curated",
+            status: "active",
+            created_at: new Date().toISOString(),
+            is_saved: false,
+          });
+          setSelectedEvent(null);
+          setDetailPlace(null);
         }
       } else {
         const pl = mapPlacesRaw.find((p) => p.id === item.id);
         if (pl) {
           setRecommendOpen(false);
           setDetailPlace(pl);
+          setSelectedEvent(null);
+          setDetailEvent(null);
+          return;
+        }
+        if (item.lat != null && item.lng != null) {
+          setRecommendOpen(false);
+          setDetailPlace({
+            id: item.id,
+            name: item.title,
+            category: "cafe",
+            description: item.description,
+            address: item.arrondissement ?? "Nearby location",
+            arrondissement: item.arrondissement ?? "Nearby",
+            lat: item.lat,
+            lng: item.lng,
+            image_url: item.image_url ?? null,
+            tags: [],
+            opening_hours: null,
+            price_range: null,
+            website_url: null,
+            instagram_url: null,
+            is_featured: false,
+            created_at: new Date().toISOString(),
+            is_saved: false,
+          });
           setSelectedEvent(null);
           setDetailEvent(null);
         }
@@ -342,67 +519,6 @@ export default function MapPage() {
     <div className="fixed inset-0 bg-zinc-100">
       <MapLocationHUD status={locStatus} lat={coords.lat} lng={coords.lng} tracking={liveTrack} />
 
-      {process.env.NODE_ENV === "development" && (
-        <div className="absolute left-2 z-30 pointer-events-auto"
-          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 180px)" }}>
-          <label className="flex items-center gap-2 px-2 py-1 rounded-lg bg-black/60 text-[10px] text-white font-sans cursor-pointer">
-            <input
-              type="checkbox"
-              checked={liveTrack}
-              onChange={(e) => setLiveTrack(e.target.checked)}
-              className="rounded border-zinc-500"
-            />
-            Track location (5s debounce)
-          </label>
-        </div>
-      )}
-
-      {/* Dev-only location debug overlay */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="absolute right-3 z-30 pointer-events-auto"
-          style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 58px)" }}>
-          <div className="rounded-xl border border-white/20 bg-black/65 text-white text-[11px] px-2.5 py-2 backdrop-blur-sm min-w-[180px] space-y-1.5">
-            {locationLoading && !devOverride && <div className="text-zinc-300">Detecting location…</div>}
-            {locationError && !devOverride && <div className="text-amber-300">GPS error — use override below</div>}
-            {lat != null && lng != null && (
-              <div className="text-zinc-300">
-                {devOverride ? "🧪 Override" : "📍 GPS"} {lat.toFixed(4)}, {lng.toFixed(4)}
-              </div>
-            )}
-            {/* Quick-set buttons */}
-            <div className="flex gap-1 flex-wrap pt-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setDevOverride(PARIS);
-                  mapRef.current?.flyTo({ center: [PARIS.lng, PARIS.lat], zoom: 14, duration: 900 });
-                }}
-                className="rounded-md px-2 py-1 bg-blue-500/70 hover:bg-blue-500 transition-colors text-white font-semibold"
-              >
-                📍 Paris
-              </button>
-              {devOverride && (
-                <button
-                  type="button"
-                  onClick={() => setDevOverride(null)}
-                  className="rounded-md px-2 py-1 bg-white/15 hover:bg-white/25 transition-colors"
-                >
-                  Use GPS
-                </button>
-              )}
-              {!devOverride && (
-                <button
-                  type="button"
-                  onClick={refresh}
-                  className="rounded-md px-2 py-1 bg-white/15 hover:bg-white/25 transition-colors"
-                >
-                  Retry GPS
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Map layer */}
       <div className="absolute inset-0 z-0">
@@ -425,10 +541,20 @@ export default function MapPage() {
           spotlightPlaceIds={spotlightPlaceIds}
           persistentLabelPlaceIds={persistentLabelPlaceIds}
           onSpotlightConsumed={() => setSpotlightPlaceIds([])}
+          geminiLandmarks={geminiLandmarks}
+          foursquarePopups={foursquarePopups}
+          ticketmasterEvents={ticketmasterMapEvents}
         />
       </div>
 
-      <MapTopChrome cityLabel="Paris" onRecenter={handleRecenter} />
+      <MapTopChrome
+        cityLabel={
+          resolvedLat != null && resolvedLng != null
+            ? `${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`
+            : undefined
+        }
+        onRecenter={handleRecenter}
+      />
 
       {/* Chat AI message banner */}
       {aiMessage && !showRecommend && (
@@ -457,9 +583,11 @@ export default function MapPage() {
         onSearchChange={setSearchQuery}
         onSearchSubmit={handleSearchSubmit}
         searchLoading={searchLoading || recommend.loading}
-        onChipSelect={handleChipSelect}
         placeFilters={placeFilters}
         onPlaceFiltersChange={setPlaceFilters}
+        onAssistantChip={(q) => void submitMapChat(q)}
+        remainingAssistant={assistantRemaining}
+        showManualSearchHint={manualSearchHint}
       />
 
       {detailEvent && (

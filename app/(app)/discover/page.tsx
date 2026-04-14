@@ -20,7 +20,7 @@ function hasSearchFilters(f: SearchFilters): boolean {
 
 export default function DiscoverPage() {
   const sp = useSearchParams();
-  const { coords } = useUserLocation();
+  const { coords, lat: rawLat, lng: rawLng } = useUserLocation();
   const queryClient = useQueryClient();
   const { savedIds: savedEventIds, toggleSaved: toggleEventSaved } = useSavedEventIds();
   const { savedIds: savedPlaceIds, toggleSaved: togglePlaceSaved, ready: savedPlaceIdsReady } =
@@ -37,11 +37,41 @@ export default function DiscoverPage() {
   });
   const searchMode = hasSearchFilters(filters);
 
-  const queryLat = Number(sp.get("lat"));
-  const queryLng = Number(sp.get("lng"));
+  // Parse URL params to NaN when absent so Number.isFinite() correctly rejects them
+  const queryLatStr = sp.get("lat");
+  const queryLngStr = sp.get("lng");
+  const queryLat = queryLatStr !== null ? Number(queryLatStr) : NaN;
+  const queryLng = queryLngStr !== null ? Number(queryLngStr) : NaN;
   const fresh = sp.get("fresh") === "1";
-  const activeLat = Number.isFinite(queryLat) ? queryLat : coords.lat;
-  const activeLng = Number.isFinite(queryLng) ? queryLng : coords.lng;
+
+  // Prefer explicit URL coords; fall back to live GPS (never 0/0)
+  const hasQueryCoords =
+    Number.isFinite(queryLat) && queryLat !== 0 &&
+    Number.isFinite(queryLng) && queryLng !== 0;
+  const activeLat = hasQueryCoords ? queryLat : (rawLat ?? 0);
+  const activeLng = hasQueryCoords ? queryLng : (rawLng ?? 0);
+
+  // Only fire API calls when we have a real non-zero location
+  const hasCoords =
+    hasQueryCoords ||
+    (rawLat !== null && rawLng !== null && rawLat !== 0 && rawLng !== 0);
+
+  const { data: liveDiscover, isLoading: liveDiscoverLoading } = useQuery({
+    queryKey: ["discover-live", activeLat, activeLng, fresh ? "fresh" : "base"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/discover/live?lat=${encodeURIComponent(String(activeLat))}&lng=${encodeURIComponent(String(activeLng))}`
+      );
+      if (!res.ok) return { events: [] as Event[], configured: false };
+      return res.json() as Promise<{
+        events: Event[];
+        configured?: boolean;
+      }>;
+    },
+    staleTime: fresh ? 0 : 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+    enabled: hasCoords,
+  });
 
   const { data: discover, isLoading: discoverLoading } = useQuery({
     queryKey: ["discover", activeLat, activeLng, fresh ? "fresh" : "base"],
@@ -62,6 +92,7 @@ export default function DiscoverPage() {
     },
     staleTime: fresh ? 0 : 30_000,
     refetchOnWindowFocus: true,
+    enabled: hasCoords,
   });
 
   // Personalised feed — replaces discover.forYou when available
@@ -81,7 +112,8 @@ export default function DiscoverPage() {
         source: string;
       }>;
     },
-    staleTime: fresh ? 0 : 3 * 60 * 1000, // respect server cache unless freshly created
+    staleTime: fresh ? 0 : 3 * 60 * 1000,
+    enabled: hasCoords,
   });
 
   const { data: searchData, isLoading: searchLoading } = useQuery({
@@ -154,6 +186,12 @@ export default function DiscoverPage() {
     );
   }, [discover?.nearYou, withSavedEvent, withSavedPlace]);
 
+  const liveEvents = useMemo(
+    () => (liveDiscover?.events ?? []).map(withSavedEvent),
+    [liveDiscover?.events, withSavedEvent]
+  );
+  const liveConfigured = liveDiscover?.configured === true;
+
   const searchEvents = useMemo(
     () => (searchData?.events ?? []).map(withSavedEvent),
     [searchData?.events, withSavedEvent]
@@ -207,6 +245,9 @@ export default function DiscoverPage() {
         searchPlaces={searchPlaces}
         searchLoading={searchLoading}
         discoverLoading={discoverLoading}
+        liveEvents={liveEvents}
+        liveLoading={liveDiscoverLoading}
+        liveConfigured={liveConfigured}
         isPersonalisedFeed={feedData?.isPersonalised}
         onEventClick={setDetailEvent}
         onPlaceClick={setDetailPlace}

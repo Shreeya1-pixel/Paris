@@ -27,6 +27,11 @@ interface DiscoverFeedProps {
   searchPlaces: Place[];
   searchLoading: boolean;
   discoverLoading?: boolean;
+  /** Ticketmaster Discovery (proxied), upcoming within radius. */
+  liveEvents?: Event[];
+  liveLoading?: boolean;
+  /** Server has TICKETMASTER_API_KEY — show live block. */
+  liveConfigured?: boolean;
   /** Whether forYou has real personalisation (behavioural data). */
   isPersonalisedFeed?: boolean;
   onEventClick: (e: Event) => void;
@@ -80,6 +85,9 @@ export function DiscoverFeed({
   searchPlaces,
   searchLoading,
   discoverLoading,
+  liveEvents = [],
+  liveLoading = false,
+  liveConfigured = false,
   isPersonalisedFeed,
   onEventClick,
   onPlaceClick,
@@ -106,7 +114,9 @@ export function DiscoverFeed({
     bestCafes.length === 0 &&
     hiddenGems.length === 0 &&
     nearYou.length === 0 &&
-    savedPlaces.length === 0;
+    savedPlaces.length === 0 &&
+    !liveLoading &&
+    !liveConfigured;
 
   return (
     <div className="min-h-dvh pb-nav ow-app-bg">
@@ -190,6 +200,36 @@ export function DiscoverFeed({
 
         {!searchMode && !discoverLoading && (
           <>
+            {(liveLoading || liveConfigured) && (
+              <section>
+                <SectionHeader
+                  title={t("discover.liveNearYou")}
+                  subtitle={t("discover.liveNearYouSubtitle")}
+                />
+                {liveLoading && (
+                  <div className="flex justify-center py-8">
+                    <div className="w-7 h-7 border-2 border-zinc-800 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {!liveLoading && liveEvents.length === 0 && (
+                  <p className="text-sm text-zinc-500">{t("discover.liveEmpty")}</p>
+                )}
+                {!liveLoading && liveEvents.length > 0 && (
+                  <div className="max-h-[min(70vh,520px)] overflow-y-auto space-y-2">
+                    {liveEvents.map((e, i) => (
+                      <EventCard
+                        key={e.id}
+                        event={e}
+                        variant="row"
+                        index={i}
+                        onClick={() => onEventClick(e)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
             {savedPlaces.length > 0 && (
               <section>
                 <SectionHeader title={t("discover.savedPlaces")} subtitle={t("discover.savedPlacesSubtitle")} />

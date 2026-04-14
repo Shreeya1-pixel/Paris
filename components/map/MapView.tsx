@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useCallback, useEffect, useMemo, useState } from "react";
-import MapGL, { Marker, type MapRef } from "react-map-gl/mapbox";
+import MapGL, { Marker, Popup, type MapRef } from "react-map-gl/mapbox";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Event, NearbyMapItem, Place, ParisCategory } from "@/types";
+import type { Event, GeminiMapLandmark, NearbyMapItem, Place, ParisCategory } from "@/types";
 import { EventPin } from "./EventPin";
 import { PlaceMapLabel } from "./PlaceMapLabel";
 import { clusterPlaces, clusterCellForZoom, LABEL_ZOOM_THRESHOLD, CLUSTER_ZOOM_THRESHOLD } from "@/utils/mapHelpers";
@@ -36,6 +36,12 @@ interface MapViewProps {
   /** Keep labels expanded for nearby places after location is detected */
   persistentLabelPlaceIds?: string[];
   onSpotlightConsumed?: () => void;
+  /** AI-suggested landmarks/shops (custom markers + popups) */
+  geminiLandmarks?: GeminiMapLandmark[];
+  /** Top nearby Foursquare places shown as auto-open popups */
+  foursquarePopups?: Place[];
+  /** Nearby Ticketmaster events shown as auto-open popups on the map */
+  ticketmasterEvents?: Event[];
 }
 
 /** Emoji for a place category cluster bubble */
@@ -49,6 +55,18 @@ const CLUSTER_EMOJI: Record<string, string> = {
   market: "🛍️",
   club: "🌙",
   bookshop: "📚",
+};
+
+const LANDMARK_EMOJI: Record<string, string> = {
+  landmark: "📍",
+  monument: "🏛️",
+  museum: "🖼️",
+  market: "🛍️",
+  shop: "🛒",
+  restaurant: "🍽️",
+  cafe: "☕",
+  temple: "🛕",
+  park: "🌳",
 };
 
 export function MapView({
@@ -69,15 +87,24 @@ export function MapView({
   spotlightPlaceIds = [],
   persistentLabelPlaceIds = [],
   onSpotlightConsumed,
+  geminiLandmarks = [],
+  foursquarePopups = [],
+  ticketmasterEvents = [],
 }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownRef = useRef(false);
   const lastMarkerClickMs = useRef(0);
   const ignoreNextMapClick = useRef(false);
   const rafRef = useRef<number | null>(null);
+  const poiNoiseFilteredRef = useRef(false);
 
   const [spotlightOpen, setSpotlightOpen] = useState<string[]>([]);
   const [mapZoom, setMapZoom] = useState(initialCenter ? 13 : 2);
+  const [landmarkPopupIds, setLandmarkPopupIds] = useState<string[]>([]);
+
+  const [fsqPopupIds, setFsqPopupIds] = useState<string[]>([]);
+
+  const [tmPopupIds, setTmPopupIds] = useState<string[]>([]);
 
   // ── Zoom tracking via requestAnimationFrame ───────────────────────────────
   const handleMove = useCallback(() => {
@@ -97,6 +124,32 @@ export function MapView({
   }, []);
 
   const handleLoad = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (map && !poiNoiseFilteredRef.current) {
+      const hiddenClasses = ["hospital", "lodging", "hotel", "motel", "hostel", "guest_house"];
+      const layers = map.getStyle()?.layers ?? [];
+      for (const layer of layers) {
+        if (layer.type !== "symbol") continue;
+        if (layer.source !== "composite") continue;
+        const sourceLayer = (layer as { "source-layer"?: string })["source-layer"];
+        if (sourceLayer !== "poi_label") continue;
+        const existingFilter = (layer as { filter?: unknown }).filter;
+        const nextFilter = [
+          "all",
+          existingFilter ?? ["==", 1, 1],
+          [
+            "!",
+            [
+              "in",
+              ["downcase", ["coalesce", ["get", "class"], ""]],
+              ["literal", hiddenClasses],
+            ],
+          ],
+        ];
+        map.setFilter(layer.id, nextFilter as mapboxgl.FilterSpecification);
+      }
+      poiNoiseFilteredRef.current = true;
+    }
     if (mapRef.current && onMapRef) {
       onMapRef(mapRef.current);
     }
@@ -126,6 +179,16 @@ export function MapView({
       duration: 1200,
     });
   }, [flyToUserOnce]);
+
+  useEffect(() => {
+    if (geminiLandmarks.length === 0) setLandmarkPopupIds([]);
+  }, [geminiLandmarks.length]);
+  useEffect(() => {
+    if (foursquarePopups.length === 0) setFsqPopupIds([]);
+  }, [foursquarePopups.length]);
+  useEffect(() => {
+    if (ticketmasterEvents.length === 0) setTmPopupIds([]);
+  }, [ticketmasterEvents.length]);
 
   useEffect(() => {
     if (!spotlightPlaceIds.length) {
@@ -219,6 +282,9 @@ export function MapView({
     if (Date.now() - lastMarkerClickMs.current < 150) return;
     onEventSelect(null);
     onPlaceSelect?.(null);
+    setLandmarkPopupIds([]);
+    setFsqPopupIds([]);
+    setTmPopupIds([]);
   }, [onEventSelect, onPlaceSelect]);
 
   if (!MAPBOX_TOKEN.trim()) {
@@ -254,6 +320,222 @@ export function MapView({
       attributionControl={false}
     >
       {/* User location marker */}
+      {geminiLandmarks.map((L) => (
+        <Marker key={L.id} longitude={L.lng} latitude={L.lat} anchor="bottom">
+          <div
+            className="cursor-pointer select-none flex flex-col items-center"
+            onClick={(e) => {
+              e.stopPropagation();
+              ignoreNextMapClick.current = true;
+              lastMarkerClickMs.current = Date.now();
+              onEventSelect(null);
+              onPlaceSelect?.(null);
+              setLandmarkPopupIds((prev) =>
+                prev.includes(L.id) ? prev.filter((id) => id !== L.id) : [...prev, L.id]
+              );
+            }}
+          >
+            <div
+              className="h-11 min-w-11 px-2.5 rounded-full border border-black/10 bg-white/95 shadow-lg flex items-center justify-center"
+              style={{
+                backdropFilter: "blur(6px)",
+              }}
+            >
+              <span className="text-[22px] leading-none">
+                {LANDMARK_EMOJI[String(L.category).toLowerCase()] ?? "✨"}
+              </span>
+            </div>
+            <div className="w-2.5 h-2.5 -mt-1 rounded-full bg-amber-500/90 border border-white shadow-sm" />
+          </div>
+        </Marker>
+      ))}
+
+      {geminiLandmarks
+        .filter((L) => landmarkPopupIds.includes(L.id))
+        .map((L) => (
+          <Popup
+            key={`popup-${L.id}`}
+            longitude={L.lng}
+            latitude={L.lat}
+            anchor="top"
+            closeButton={false}
+            closeOnClick={false}
+            offset={16}
+            className="z-20"
+            onClose={() => setLandmarkPopupIds((prev) => prev.filter((id) => id !== L.id))}
+          >
+            <div className="w-[260px] max-w-[80vw]">
+              <p className="text-sm font-semibold text-zinc-900">{L.name}</p>
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">{L.category}</p>
+              {L.description ? (
+                <p className="text-xs text-zinc-700 mt-1.5 leading-snug">{L.description}</p>
+              ) : null}
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${L.lat},${L.lng}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2.5 inline-flex items-center rounded-full bg-zinc-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-zinc-700 transition-colors"
+              >
+                Get directions
+              </a>
+            </div>
+          </Popup>
+        ))}
+
+      {/* Foursquare nearby place popups */}
+      {foursquarePopups
+        .filter((p) => fsqPopupIds.includes(p.id))
+        .map((p) => {
+          const catEmoji: Record<string, string> = {
+            cafe: "☕", restaurant: "🍽️", bar: "🍷", boulangerie: "🥐",
+            gallery: "🖼️", park: "🌳", library: "📖", market: "🛍️",
+            club: "🌙", bookshop: "📚",
+          };
+          const emoji = catEmoji[p.category] ?? "📍";
+          const distLabel =
+            p.distance_km != null
+              ? p.distance_km < 1
+                ? `${Math.round(p.distance_km * 1000)} m away`
+                : `${p.distance_km.toFixed(1)} km away`
+              : null;
+          return (
+            <Popup
+              key={`fsq-popup-${p.id}`}
+              longitude={p.lng}
+              latitude={p.lat}
+              anchor="top"
+              closeButton={false}
+              closeOnClick={false}
+              offset={14}
+              className="z-20"
+              onClose={() => setFsqPopupIds((prev) => prev.filter((id) => id !== p.id))}
+            >
+              <div className="w-[240px] max-w-[78vw]">
+                <div className="flex items-start gap-2">
+                  <span className="text-xl leading-none mt-0.5 shrink-0">{emoji}</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-zinc-900 leading-tight">{p.name}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-400 mt-0.5">{p.category}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFsqPopupIds((prev) => prev.filter((id) => id !== p.id))}
+                    className="ml-auto shrink-0 text-zinc-400 hover:text-zinc-700 leading-none -mt-0.5 -mr-0.5"
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+                {distLabel && (
+                  <p className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-1">
+                    📍 {distLabel}
+                    {p.arrondissement ? ` · ${p.arrondissement}` : ""}
+                  </p>
+                )}
+                {p.address && !p.arrondissement && (
+                  <p className="text-[11px] text-zinc-500 mt-1 truncate">{p.address}</p>
+                )}
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${p.lat},${p.lng}`)}&destination_place_id=${encodeURIComponent(p.name)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2.5 inline-flex items-center rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
+                >
+                  Get directions
+                </a>
+              </div>
+            </Popup>
+          );
+        })}
+
+      {/* Ticketmaster event popups */}
+      {ticketmasterEvents
+        .filter((e) => tmPopupIds.includes(e.id))
+        .map((e) => {
+          const catEmoji: Record<string, string> = {
+            music: "🎵", culture: "🎭", sport: "⚽", nightlife: "🌙",
+            art: "🖼️", market: "🛍️", outdoor: "🌳",
+          };
+          const emoji = catEmoji[e.category] ?? "🎟️";
+          const distLabel =
+            e.distance_km != null
+              ? e.distance_km < 1
+                ? `${Math.round(e.distance_km * 1000)} m away`
+                : `${e.distance_km.toFixed(1)} km away`
+              : null;
+          const dateStr = e.start_time
+            ? new Date(e.start_time).toLocaleDateString(undefined, {
+                weekday: "short", month: "short", day: "numeric",
+              })
+            : null;
+          return (
+            <Popup
+              key={`tm-popup-${e.id}`}
+              longitude={e.lng}
+              latitude={e.lat}
+              anchor="top"
+              closeButton={false}
+              closeOnClick={false}
+              offset={14}
+              className="z-20"
+              onClose={() => setTmPopupIds((prev) => prev.filter((id) => id !== e.id))}
+            >
+              <div className="w-[260px] max-w-[80vw]">
+                <div className="flex items-start gap-2">
+                  <span className="text-xl leading-none mt-0.5 shrink-0">{emoji}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-zinc-900 leading-snug line-clamp-2">
+                      {e.title}
+                    </p>
+                    {e.location_name && (
+                      <p className="text-[10px] text-zinc-500 mt-0.5 truncate">📍 {e.location_name}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTmPopupIds((prev) => prev.filter((id) => id !== e.id))}
+                    className="ml-auto shrink-0 text-zinc-400 hover:text-zinc-700 leading-none -mt-0.5 -mr-0.5"
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  {dateStr && (
+                    <span className="text-[10px] bg-zinc-100 text-zinc-600 rounded-full px-2 py-0.5">
+                      🗓 {dateStr}
+                    </span>
+                  )}
+                  {distLabel && (
+                    <span className="text-[10px] bg-zinc-100 text-zinc-600 rounded-full px-2 py-0.5">
+                      {distLabel}
+                    </span>
+                  )}
+                </div>
+                {e.ticket_url ? (
+                  <a
+                    href={e.ticket_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    🎟️ Get tickets
+                  </a>
+                ) : (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${e.lat},${e.lng}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2.5 inline-flex items-center rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    Get directions
+                  </a>
+                )}
+              </div>
+            </Popup>
+          );
+        })}
+
       {showUserMarker && userLocation && (
         <Marker longitude={userLocation.lng} latitude={userLocation.lat} anchor="bottom">
           <div className="flex flex-col items-center pointer-events-none select-none">
@@ -285,6 +567,15 @@ export function MapView({
               e.originalEvent.stopPropagation();
               ignoreNextMapClick.current = true;
               lastMarkerClickMs.current = Date.now();
+              if (event.id.startsWith("tm-")) {
+                setTmPopupIds((prev) =>
+                  prev.includes(event.id)
+                    ? prev.filter((id) => id !== event.id)
+                    : [event.id]
+                );
+                onEventSelect(null);
+                return;
+              }
               onEventSelect(isSelected ? null : event);
             }}
           >
@@ -324,6 +615,11 @@ export function MapView({
               lastMarkerClickMs.current = Date.now();
               onEventSelect(null);
               onPlaceSelect?.(place);
+              setFsqPopupIds((prev) =>
+                prev.includes(place.id)
+                  ? prev.filter((id) => id !== place.id)
+                  : [place.id]
+              );
             }}
           >
             <PlaceMapLabel

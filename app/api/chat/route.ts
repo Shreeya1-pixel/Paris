@@ -5,13 +5,15 @@ export const maxDuration = 30;
  *
  * Tiered response system:
  *
+ *  Assistant mode — Gemini AI with user coordinates + live events context
+ *    Used by the map chatbot. Gemini answers about the user's real location.
+ *    3 turns per session.
+ *
  *  Tier 1 — Local Knowledge Base ($0)
  *    Serves 55 curated Paris spots instantly via keyword matching.
  *
  *  Tier 2 — Gemini AI ($$)
- *    Complex/conversational queries. Gemini receives both the live DB
- *    places AND the full local KB catalogue, so it always has 50+ spots
- *    to pick from — even if Supabase paris_places is empty.
+ *    Complex/conversational queries.
  *
  *  Rate limiter
  *    Hard limit: 30 total requests / IP / 15 min.
@@ -20,6 +22,7 @@ export const maxDuration = 30;
 
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, consumeQuota, rateLimitMessage } from "@/lib/rateLimiter";
+import { assistantQuotaStatus, consumeAssistantTurn } from "@/lib/assistantSessionQuota";
 import { routeQuery } from "@/lib/chatRouter";
 import { searchLocalKB, ALL_SPOTS } from "@/lib/localKnowledgeBase";
 import type { LocalSpot } from "@/lib/localKnowledgeBase";
@@ -35,10 +38,6 @@ function getClientIp(req: NextRequest): string {
   );
 }
 
-/**
- * Minimal guardrail: only block queries that are clearly unrelated to
- * map/place discovery. The system prompt handles everything else.
- */
 function isOffTopic(query: string): boolean {
   const q = query.toLowerCase().trim();
   if (!q) return true;
@@ -60,7 +59,7 @@ async function callGemini(system: string, user: string): Promise<string> {
   if (!key) throw new Error("GEMINI_API_KEY not set");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -71,8 +70,12 @@ async function callGemini(system: string, user: string): Promise<string> {
       }),
     }
   );
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const data = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+  };
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  const textPart = parts.find((p) => !p.thought && p.text);
+  return textPart?.text ?? "{}";
 }
 
 async function callGroq(system: string, user: string): Promise<string> {
@@ -141,52 +144,68 @@ async function callAI(system: string, user: string): Promise<string> {
   throw new Error("NO_AI_KEY");
 }
 
-// ─── System prompt ────────────────────────────────────────────────────────────
+// ─── System prompts ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
-You are the AI place guide for Openworld — a map-based discovery app.
-
-Your ONLY job: help users find places to visit on the map.
+You are the AI place guide for Openworld, a global map-based discovery app.
+Your ONLY job: help users find places to visit on the map, anywhere in the world.
 Never answer coding, math, general trivia, weather, or anything unrelated to discovering places.
-
-When a user asks about a place to eat, drink, explore, hang out, or visit — pick the best matching places from the catalogue provided and return their IDs.
-
-Paris neighbourhood knowledge:
-1er (Louvre, Châtelet), 3ème/4ème (Le Marais), 5ème (Latin Quarter),
-6ème (Saint-Germain), 9ème (Pigalle, SoPi), 10ème (Canal Saint-Martin, République),
-11ème (Bastille, Oberkampf), 18ème (Montmartre)
-
-Cultural shortcuts:
-• "natural wine" → La Buvette, Le Baron Rouge, Septime Cave
-• "techno / club" → Rex Club, Concrete, Wanderlust
-• "specialty coffee" → Télescope, Ten Belles, Coutume Café
-• "hidden bar" → Moonshiner, Candelaria
-• "sunday market" → Marché Bastille, Marché d'Aligre
-• "romantic / date" → Jardin du Luxembourg, Musée Rodin garden
-
+The user's GPS coordinates are provided. Use them to give location-aware suggestions.
+When a user asks about a place to eat, drink, explore, hang out, or visit, pick the best matching places from the catalogue provided and return their IDs.
+If the catalogue has no good matches, still give a helpful message about what's nearby based on the coordinates.
 Always return ONLY valid JSON, no markdown, no prose outside JSON.
+`.trim();
+
+const ASSISTANT_SYSTEM = `
+You are the interactive map assistant for Openworld, a global map-based discovery app.
+
+You always receive the user's current GPS latitude/longitude, a list of nearby live events, and a catalogue of nearby places already loaded in the app.
+THIS IS KEY: base EVERY answer on where the user actually is right now.
+
+Your job:
+- Determine the user's city and neighbourhood from their GPS coordinates.
+- Answer conversationally about food, things to do, events, or attractions NEAR the user's actual coordinates.
+- When relevant, select the best matching place IDs from the "Nearby places catalogue" provided — these are real places near the user right now.
+- NEVER assume the user is in Paris or any specific city. Always reverse-geocode their lat/lng mentally.
+- If coordinates are missing or (0, 0), ask the user to enable location access.
+
+Return ONLY valid JSON (no markdown fences):
+{
+  "message": "Your reply (2-5 short sentences). Be specific to the user's city and neighbourhood.",
+  "placeIds": ["id1", "id2"]
+}
+
+Rules for placeIds:
+- Only include IDs that appear in the "Nearby places catalogue" provided in the user message.
+- Pick 2-5 of the most relevant places for the query. Omit the field if none match.
+- Do NOT invent IDs. Only use IDs from the catalogue exactly as given.
 `.trim();
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const { query, lat, lng, lang: rawLang } = await req.json() as {
-    query?: string; lat?: number; lng?: number; lang?: string;
+  const body = await req.json() as {
+    query?: string;
+    lat?: number;
+    lng?: number;
+    lang?: string;
+    mode?: string;
+    sessionId?: string;
+    discoverContext?: { events?: { id: string; title: string; start_time?: string; source?: string; ticket_url?: string | null }[] };
   };
+  const { query, lat, lng, lang: rawLang, mode, sessionId, discoverContext } = body;
   const lang = rawLang === "fr" ? "fr" : "en";
+  const assistantMode = mode === "assistant";
 
   if (!query?.trim()) {
     return NextResponse.json({ error: "No query provided" }, { status: 400 });
   }
 
-  // Minimal guardrail — only block clearly off-topic requests
   if (isOffTopic(query)) {
     return NextResponse.json({
       events: [],
       places: [],
-      message: lang === "fr"
-        ? "Je suis ici pour t'aider à trouver des endroits sur la carte. Essaie : 'bar naturel près de Bastille'."
-        : "I'm here to help you find places on the map. Try: 'natural wine bar near Bastille'.",
+      message: "I'm here to help you find places on the map. Try: 'what should I eat near me?'",
       tier: "guardrail",
     });
   }
@@ -197,12 +216,203 @@ export async function POST(req: NextRequest) {
 
   if (!rateLimit.allowed) {
     return NextResponse.json(
-      { events: [], places: [], message: rateLimitMessage(lang, rateLimit.retryAfterMs), rateLimited: true },
+      {
+        events: [],
+        places: [],
+        message: rateLimitMessage(lang, rateLimit.retryAfterMs),
+        rateLimited: true,
+        manualSearch: true,
+        remainingAssistant: 0,
+      },
       { status: 429, headers: {
         "Retry-After": String(Math.ceil(rateLimit.retryAfterMs / 1000)),
         "X-RateLimit-Reset": String(Date.now() + rateLimit.retryAfterMs),
       }}
     );
+  }
+
+  // ── Assistant mode: Gemini with real coordinates, 3 turns / session ─────
+  if (assistantMode) {
+    const quotaKey = sessionId?.trim() || `ip:${ip}`;
+    const aq = assistantQuotaStatus(quotaKey);
+    if (!aq.allowed) {
+      consumeQuota(ip, false);
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: "You've used your 3 assistant questions for this session. Try manual search or the Discover tab.",
+        tier: "assistant_limit",
+        manualSearch: true,
+        remainingAssistant: 0,
+      });
+    }
+
+    if (!getGeminiApiKey()) {
+      consumeQuota(ip, false);
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: "Add GEMINI_API_KEY on the server for the assistant. Meanwhile, use Discover or manual search.",
+        tier: "assistant",
+        manualSearch: true,
+        remainingAssistant: aq.remaining,
+      });
+    }
+
+    if (!rateLimit.aiAllowed) {
+      consumeQuota(ip, false);
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: rateLimitMessage(lang, rateLimit.retryAfterMs),
+        rateLimited: true,
+        manualSearch: true,
+        remainingAssistant: aq.remaining,
+      });
+    }
+
+    const hasValidCoords =
+      typeof lat === "number" &&
+      typeof lng === "number" &&
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 &&
+      Math.abs(lng) <= 180 &&
+      !(lat === 0 && lng === 0);
+    if (!hasValidCoords) {
+      consumeQuota(ip, false);
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: "Enable location access so I can answer for where you are right now.",
+        tier: "assistant",
+        manualSearch: true,
+        remainingAssistant: aq.remaining,
+      });
+    }
+
+    // ── Fetch nearby places from Supabase to give Gemini real pins to pick ──
+    const ASSISTANT_RADIUS_DEG = 0.35; // ~39 km in degrees (broader city coverage)
+    type NearbyPlaceRow = {
+      id: string; name: string; category: string; description: string | null;
+      arrondissement: string | null; address: string | null; tags: string[] | null;
+      lat: number; lng: number; image_url: string | null; price_range: string | null;
+      website_url: string | null; opening_hours: Record<string, unknown> | null;
+      is_featured: boolean; created_at: string;
+    };
+    let nearbyPlaceRows: NearbyPlaceRow[] = [];
+    try {
+      const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supaKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (supaUrl && supaKey) {
+        const { createClient } = await import("@supabase/supabase-js");
+        const sb = createClient(supaUrl, supaKey);
+        const plRes = await sb
+          .from("paris_places")
+          .select("id,name,category,description,arrondissement,address,tags,lat,lng,image_url,price_range,website_url,opening_hours,is_featured,created_at")
+          .gte("lat", lat - ASSISTANT_RADIUS_DEG)
+          .lte("lat", lat + ASSISTANT_RADIUS_DEG)
+          .gte("lng", lng - ASSISTANT_RADIUS_DEG)
+          .lte("lng", lng + ASSISTANT_RADIUS_DEG)
+          .limit(30);
+        nearbyPlaceRows = (plRes.data ?? []) as NearbyPlaceRow[];
+      }
+    } catch { /* continue without places */ }
+
+    const nearbyPlacesCtx = nearbyPlaceRows.map((p) => ({
+      id: p.id, name: p.name, category: p.category,
+      arrondissement: p.arrondissement,
+      description: (p.description ?? "").slice(0, 60),
+    }));
+
+    // Build the context: coordinates + events + nearby places catalogue
+    const discoverEvents = discoverContext?.events ?? [];
+    const userMessage = [
+      `User question: "${query}"`,
+      ``,
+      `Current User Location: latitude ${lat}, longitude ${lng}`,
+      `Language preference: ${lang}`,
+      ``,
+      `Nearby live events (Ticketmaster + app listings):`,
+      JSON.stringify(discoverEvents.slice(0, 20)),
+      ``,
+      `Nearby places catalogue (use ONLY these IDs in placeIds):`,
+      JSON.stringify(nearbyPlacesCtx),
+      ``,
+      `IMPORTANT: Use the coordinates above to determine which city/neighbourhood the user is in.`,
+      `Answer their question specifically for THAT location. Do NOT default to Paris.`,
+      `Pick placeIds only from the catalogue above that best answer the user's question.`,
+      `If the catalogue is empty, do not invent places and say nearby place data is limited right now.`,
+    ].join("\n");
+
+    console.log("[chat/assistant] lat:", lat, "lng:", lng, "query:", query?.slice(0, 60), "places_ctx:", nearbyPlacesCtx.length);
+
+    let raw = "{}";
+    try {
+      raw = await callGemini(ASSISTANT_SYSTEM, userMessage);
+      consumeQuota(ip, true);
+      consumeAssistantTurn(quotaKey);
+    } catch (err) {
+      console.error("[chat/assistant] Gemini error:", err);
+      consumeQuota(ip, false);
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: "Assistant is unavailable. Open Discover or try a manual search.",
+        tier: "assistant",
+        manualSearch: true,
+        remainingAssistant: assistantQuotaStatus(quotaKey).remaining,
+      });
+    }
+
+    console.log("[chat/assistant] raw response:", raw.slice(0, 400));
+
+    const cleaned = raw
+      .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+
+    let msgText = "Here's what I found near you.";
+    let pickedPlaceIds: string[] = [];
+    try {
+      const parsed = JSON.parse(cleaned) as { message?: string; placeIds?: string[] };
+      msgText = parsed.message || cleaned.slice(0, 500);
+      pickedPlaceIds = Array.isArray(parsed.placeIds) ? parsed.placeIds.slice(0, 5) : [];
+    } catch {
+      msgText = cleaned.slice(0, 500) || "Here's what I found near you.";
+    }
+
+    // ── Hydrate picked place IDs into full place objects ─────────────────────
+    const placeById = new Map(nearbyPlaceRows.map((p) => [p.id, p]));
+    const hydratedPlaces = pickedPlaceIds
+      .map((id) => placeById.get(id))
+      .filter(Boolean)
+      .map((p) => ({
+        id: p!.id,
+        name: p!.name,
+        category: p!.category,
+        description: p!.description,
+        address: p!.address ?? p!.arrondissement ?? "",
+        arrondissement: p!.arrondissement,
+        lat: p!.lat,
+        lng: p!.lng,
+        image_url: p!.image_url,
+        tags: p!.tags ?? [],
+        opening_hours: p!.opening_hours ?? null,
+        price_range: p!.price_range,
+        website_url: p!.website_url,
+        instagram_url: null,
+        is_featured: p!.is_featured,
+        created_at: p!.created_at,
+        is_saved: false,
+      }));
+
+    const remainingAssistant = assistantQuotaStatus(quotaKey).remaining;
+    return NextResponse.json({
+      events: [],
+      places: hydratedPlaces,
+      message: msgText,
+      tier: "assistant",
+      remainingAssistant,
+    });
   }
 
   // ── Tier 1: Local KB ─────────────────────────────────────────────────────
@@ -232,7 +442,6 @@ export async function POST(req: NextRequest) {
 
   // ── Tier 2: Gemini AI ─────────────────────────────────────────────────────
 
-  // 1. Fetch live DB places (may be empty) as additional context
   let dbPlaces: Record<string, unknown>[] = [];
   try {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -248,7 +457,6 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* continue with KB only */ }
 
-  // 2. Build unified catalogue for Gemini — DB places first, then KB spots
   const kbContext = ALL_SPOTS.map((s) => ({
     id: s.id,
     name: s.name,
@@ -267,25 +475,24 @@ export async function POST(req: NextRequest) {
     description: ((p.description as string) ?? "").slice(0, 80),
   }));
 
-  // Merge: DB takes priority (same name de-dupe by name)
   const dbNames = new Set(dbContext.map((p) => String(p.name).toLowerCase()));
   const mergedKB = kbContext.filter((k) => !dbNames.has(k.name.toLowerCase()));
   const allPlacesCtx = [...dbContext, ...mergedKB];
 
   const userMessage = `User query: "${query}"
-User location: lat ${lat ?? 48.8566}, lng ${lng ?? 2.3522}
+User location: lat ${lat ?? "unknown"}, lng ${lng ?? "unknown"}
 Language: ${lang}
 
 Available places catalogue (${allPlacesCtx.length} spots):
 ${JSON.stringify(allPlacesCtx)}
 
 Instructions:
-- Pick the 1–5 most relevant place IDs from the catalogue above that match the query.
+- Pick the 1-5 most relevant place IDs from the catalogue above that match the query.
 - ONLY use IDs that appear in the catalogue.
 - Return ONLY valid JSON, no markdown:
 {
   "placeIds": ["id1", "id2"],
-  "message": "${lang === "fr" ? "Une phrase courte et chaleureuse (max 20 mots)." : "One short warm sentence (max 20 words)."}"
+  "message": "One short warm sentence (max 20 words)."
 }`;
 
   let raw = "{}";
@@ -295,7 +502,6 @@ Instructions:
   } catch (err: unknown) {
     const noKey = err instanceof Error && err.message === "NO_AI_KEY";
     consumeQuota(ip, false);
-    // Fall back to KB search before giving up
     const { spots, message } = searchLocalKB(query, lang);
     if (spots.length > 0) {
       return NextResponse.json({ events: [], places: spots.map(localSpotToPlace), message, tier: "local" });
@@ -309,7 +515,6 @@ Instructions:
     });
   }
 
-  // Strip markdown fences if present
   const cleaned = raw
     .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
 
@@ -317,12 +522,11 @@ Instructions:
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    // JSON parse failed — fall back to KB
     const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
       events: [],
       places: spots.length > 0 ? spots.map(localSpotToPlace) : [],
-      message: spots.length > 0 ? message : (lang === "fr" ? "Voici quelques idées !" : "Here are some ideas!"),
+      message: spots.length > 0 ? message : "Here are some ideas!",
       tier: "local",
     });
   }
@@ -330,17 +534,16 @@ Instructions:
   const pickedIds = parsed.placeIds ?? [];
 
   if (pickedIds.length === 0) {
-    // Gemini found nothing — fall back to KB search
     const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
       events: [],
       places: spots.map(localSpotToPlace),
-      message: spots.length > 0 ? message : (parsed.message ?? (lang === "fr" ? "Rien trouvé — réessayez !" : "Nothing found — try rephrasing!")),
+      message: spots.length > 0 ? message : (parsed.message ?? "Nothing found - try rephrasing!"),
       tier: spots.length > 0 ? "local" : "ai",
     });
   }
 
-  // ── Hydrate: UUID IDs → Supabase, kb-paris-* IDs → local KB ─────────────
+  // ── Hydrate: UUID IDs -> Supabase, kb-paris-* IDs -> local KB ─────────────
   const uuids = pickedIds.filter((id) => !id.startsWith("kb-"));
   const kbIds  = pickedIds.filter((id) => id.startsWith("kb-"));
 
@@ -360,7 +563,6 @@ Instructions:
 
   const kbPlaces = ALL_SPOTS.filter((s) => kbIds.includes(s.id)).map(localSpotToPlace);
 
-  // Maintain Gemini's ordering
   const hydratedById = new Map<string, unknown>();
   for (const p of supabasePlaces) hydratedById.set((p as { id: string }).id, p);
   for (const p of kbPlaces)       hydratedById.set(p.id, p);
@@ -369,7 +571,6 @@ Instructions:
     .map((id) => hydratedById.get(id))
     .filter(Boolean);
 
-  // If hydration still empty, fall back to KB
   if (orderedPlaces.length === 0) {
     const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
@@ -383,7 +584,7 @@ Instructions:
   return NextResponse.json({
     events: [],
     places: orderedPlaces,
-    message: parsed.message ?? (lang === "fr" ? "Voici ce que j'ai trouvé !" : "Here's what I found!"),
+    message: parsed.message ?? "Here's what I found!",
     tier: "ai",
   });
 }

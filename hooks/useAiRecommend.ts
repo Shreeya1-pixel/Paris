@@ -30,7 +30,7 @@ export function useAiRecommend() {
       lng: number,
       vibe: Vibe | "" = "",
       lang: "en" | "fr" = "en"
-    ) => {
+    ): Promise<{ items: RecommendItem[]; message: string; source: RecommendSource | null; error: string | null }> => {
       setState((s) => ({ ...s, loading: true, error: null }));
       try {
         const res = await window.fetch("/api/ai/recommend", {
@@ -47,44 +47,60 @@ export function useAiRecommend() {
         };
 
         if (res.status === 429) {
-          setState({
+          const next = {
             items: [],
             message: data.message ?? "Too many requests — try again soon.",
             source: "fallback",
             loading: false,
             error: null,
-          });
-          return;
+          } as const;
+          setState(next);
+          return { items: next.items, message: next.message, source: next.source, error: next.error };
         }
 
         if (!res.ok) {
+          const errMsg = data.message ?? "Recommendation failed";
           setState((s) => ({
             ...s,
             loading: false,
-            error: data.message ?? "Recommendation failed",
+            error: errMsg,
           }));
-          return;
+          return { items: [], message: "", source: null, error: errMsg };
         }
 
-        setState({
+        const next = {
           items: data.items ?? [],
           message: data.message ?? "",
           source: data.source ?? null,
           loading: false,
           error: null,
-        });
+        } as const;
+        setState(next);
+        return { items: next.items, message: next.message, source: next.source, error: next.error };
       } catch {
+        const errMsg = "Could not reach recommendation service.";
         setState((s) => ({
           ...s,
           loading: false,
-          error: "Could not reach recommendation service.",
+          error: errMsg,
         }));
+        return { items: [], message: "", source: null, error: errMsg };
       }
     },
     []
   );
 
+  const setLocal = useCallback((items: RecommendItem[], message: string) => {
+    setState({
+      items,
+      message,
+      source: "fallback",
+      loading: false,
+      error: null,
+    });
+  }, []);
+
   const clear = useCallback(() => setState(INITIAL), []);
 
-  return { ...state, fetch, clear };
+  return { ...state, fetch, setLocal, clear };
 }

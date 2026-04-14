@@ -168,3 +168,13 @@ export interface NearbyMapItem {
   location_name?: string | null;
   arrondissement?: string | null;
 }
+
+/** Gemini-suggested pins near the user (from /api/map/landmarks). */
+export interface GeminiMapLandmark {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  lat: number;
+  lng: number;
+}

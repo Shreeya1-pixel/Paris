@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, ArrowUp, X } from "lucide-react";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface ChatBarProps {
   onResult: (events: { events: unknown[]; places: unknown[]; message: string }) => void;
@@ -18,6 +19,7 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatBar({ onResult, userLocation }: ChatBarProps) {
+  const { lang } = useLanguage();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -38,6 +40,8 @@ export default function ChatBar({ onResult, userLocation }: ChatBarProps) {
           query,
           lat: userLocation.lat,
           lng: userLocation.lng,
+          lang,
+          mode: "assistant",
         }),
       });
       const data = await res.json();
@@ -142,7 +146,7 @@ export default function ChatBar({ onResult, userLocation }: ChatBarProps) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-          placeholder="What are you looking for in Paris?"
+          placeholder="What are you looking for nearby?"
           className="flex-1 bg-transparent text-black placeholder:text-gray-500 text-sm outline-none font-sans"
         />
         <AnimatePresence>

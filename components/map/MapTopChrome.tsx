@@ -8,16 +8,15 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageToggle } from "@/components/LanguageToggle";
 
 interface MapTopChromeProps {
+  /** e.g. coordinates or neighbourhood; defaults to “Near you”. */
   cityLabel?: string;
   onRecenter?: () => void;
 }
 
-export function MapTopChrome({
-  cityLabel = "Paris",
-  onRecenter,
-}: MapTopChromeProps) {
+export function MapTopChrome({ cityLabel, onRecenter }: MapTopChromeProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { t } = useLanguage();
+  const label = cityLabel ?? t("map.nearYou");
 
   return (
     <>
@@ -31,20 +30,13 @@ export function MapTopChrome({
             {t("map.location")}
           </p>
           <p className="text-sm font-semibold text-zinc-900 flex items-center gap-0.5">
-            {cityLabel}
+            {label}
             <ChevronDown className="w-4 h-4 text-zinc-500" />
           </p>
         </button>
 
         <div className="pointer-events-auto flex flex-col items-end gap-2 shrink-0">
           <LanguageToggle size="sm" layoutId="lang-pill-map" />
-          <Link
-            href="/profile"
-            className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-sm shadow-md border-2 border-white"
-            aria-label={t("map.profileAria")}
-          >
-            G
-          </Link>
         </div>
       </header>
 

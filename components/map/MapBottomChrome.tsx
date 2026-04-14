@@ -19,16 +19,15 @@ const PLACE_FILTERS: { id: NearbyPlaceFilter; label: string; emoji: string }[] =
 
 type Chip = {
   labelKey: string;
-  vibe: string;
   emoji: string;
 };
 
 const CHIPS: Chip[] = [
-  { labelKey: "map.aiChip1", vibe: "explore", emoji: "🎯" },
-  { labelKey: "map.aiChip2", vibe: "date", emoji: "💕" },
-  { labelKey: "map.aiChip3", vibe: "chill", emoji: "🧘" },
-  { labelKey: "map.aiChip4", vibe: "nightlife", emoji: "🎵" },
-  { labelKey: "map.aiChip5", vibe: "explore", emoji: "🗼" },
+  { labelKey: "map.aiChip1", emoji: "🎯" },
+  { labelKey: "map.aiChip2", emoji: "💕" },
+  { labelKey: "map.aiChip3", emoji: "🧘" },
+  { labelKey: "map.aiChip4", emoji: "🎵" },
+  { labelKey: "map.aiChip5", emoji: "✨" },
 ];
 
 interface MapBottomChromeProps {
@@ -36,9 +35,14 @@ interface MapBottomChromeProps {
   onSearchChange: (q: string) => void;
   onSearchSubmit: () => void;
   searchLoading?: boolean;
-  onChipSelect?: (vibe: string, label: string) => void;
   placeFilters?: NearbyPlaceFilter[];
   onPlaceFiltersChange?: (next: NearbyPlaceFilter[]) => void;
+  /** Fires Gemini assistant with this query — location-aware, shows results on map. */
+  onAssistantChip?: (query: string) => void;
+  /** Assistant turns left (from server); omit to hide. */
+  remainingAssistant?: number | null;
+  /** Show fallback hint (rate limit, API cap, location blocked). */
+  showManualSearchHint?: boolean;
 }
 
 export function MapBottomChrome({
@@ -46,9 +50,11 @@ export function MapBottomChrome({
   onSearchChange,
   onSearchSubmit,
   searchLoading,
-  onChipSelect,
   placeFilters = [],
   onPlaceFiltersChange,
+  onAssistantChip,
+  remainingAssistant,
+  showManualSearchHint,
 }: MapBottomChromeProps) {
   const { t } = useLanguage();
   const [chipsVisible, setChipsVisible] = useState(true);
@@ -65,8 +71,8 @@ export function MapBottomChrome({
   const handleChip = (chip: Chip) => {
     const label = t(chip.labelKey as Parameters<typeof t>[0]);
     onSearchChange(label);
-    setChipsVisible(false);
-    onChipSelect?.(chip.vibe, label);
+    // Route through the Gemini assistant (location-aware) instead of Paris-only DB
+    onAssistantChip?.(label);
   };
 
   return (
@@ -81,8 +87,9 @@ export function MapBottomChrome({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.22 }}
-              className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5 -mx-1 px-1 items-center"
+              className="flex flex-col gap-2"
             >
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5 -mx-1 px-1 items-center">
               {onPlaceFiltersChange &&
                 PLACE_FILTERS.map((f) => {
                   const on = placeFilters.includes(f.id);
@@ -130,9 +137,28 @@ export function MapBottomChrome({
               >
                 <X className="w-3.5 h-3.5" />
               </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {remainingAssistant != null && (
+          <p className="text-[10px] text-zinc-600 font-sans px-1 text-center">
+            {t("map.assistantRemaining").replace("{{n}}", String(remainingAssistant))}
+          </p>
+        )}
+
+        {showManualSearchHint && (
+          <div className="rounded-xl bg-white/90 border border-zinc-200/80 px-3 py-2 text-center shadow-sm">
+            <p className="text-[11px] text-zinc-700 font-sans">{t("map.manualSearchHint")}</p>
+            <Link
+              href="/discover"
+              className="text-[11px] font-semibold text-amber-800 mt-1 inline-block underline-offset-2 hover:underline"
+            >
+              {t("map.openDiscover")}
+            </Link>
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <Link
