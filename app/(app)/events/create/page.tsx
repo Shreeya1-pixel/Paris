@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -23,6 +23,8 @@ import {
   TreePine,
   ShoppingBag,
   Dumbbell,
+  Plus,
+  X,
 } from "lucide-react";
 import { CATEGORIES, PARIS_CENTER, ARRONDISSEMENTS } from "@/lib/constants";
 import { MapLocationPicker } from "@/components/map/MapLocationPicker";
@@ -80,6 +82,8 @@ export default function CreateEventPage() {
   const [gender, setGender] = useState<"male" | "female" | "none">("none");
   const [pickerLat, setPickerLat] = useState(PARIS_CENTER.lat);
   const [pickerLng, setPickerLng] = useState(PARIS_CENTER.lng);
+  const [imagePreview, setImagePreview] = useState("");
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const schema = useMemo(
     () =>
@@ -98,7 +102,10 @@ export default function CreateEventPage() {
           capacity: z.string(),
           price: z.number().nonnegative().optional(),
           ticket_url: z.string().refine((s) => !s || /^https?:\/\//.test(s), t("validation.url")),
-          image_url: z.string().refine((s) => !s || /^https?:\/\//.test(s), t("validation.url")),
+          image_url: z.string().refine(
+            (s) => !s || /^https?:\/\//.test(s) || /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(s),
+            t("validation.url")
+          ),
           min_age: z.string(),
         })
         .refine(
@@ -137,6 +144,40 @@ export default function CreateEventPage() {
   });
 
   const setFree = (free: boolean) => setTicketFree(free);
+
+  const handleImageSelect = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setPublishError("Please choose an image file.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setPublishError("Image must be under 2 MB.");
+      e.target.value = "";
+      return;
+    }
+    setPublishError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl.startsWith("data:image/")) {
+        setPublishError("Could not read image. Try another file.");
+        return;
+      }
+      setImagePreview(dataUrl);
+      setValue("image_url", dataUrl, { shouldValidate: true, shouldDirty: true });
+    };
+    reader.onerror = () => setPublishError("Could not read image. Try another file.");
+    reader.readAsDataURL(file);
+  };
+
+  const clearImage = () => {
+    setImagePreview("");
+    setValue("image_url", "", { shouldValidate: true, shouldDirty: true });
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  };
 
   const onSubmit = async (data: FormData) => {
     setSaving(true);
@@ -511,12 +552,47 @@ export default function CreateEventPage() {
 
           <div>
             <label className="text-sm font-bold text-zinc-700">{t("create.imageOpt")}</label>
+            <input type="hidden" {...register("image_url")} />
             <input
-              {...register("image_url")}
-              type="url"
-              placeholder={t("create.imageUrlPh")}
-              className="mt-2 ow-glass-input w-full h-12 px-4 text-sm"
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageSelect}
+              className="hidden"
             />
+            {!imagePreview ? (
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="mt-2 w-full h-28 rounded-2xl border border-dashed border-zinc-300 bg-white/55 hover:bg-white/75 transition-colors flex flex-col items-center justify-center text-zinc-600"
+              >
+                <Plus className="w-6 h-6 mb-1.5" />
+                <span className="text-sm font-medium">Add image</span>
+              </button>
+            ) : (
+              <div className="mt-2 relative rounded-2xl overflow-hidden border border-zinc-200 bg-white/55">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imagePreview} alt="Event cover preview" className="w-full h-40 object-cover" />
+                <div className="absolute top-2 right-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="w-9 h-9 rounded-full bg-black/70 text-white flex items-center justify-center"
+                    aria-label="Replace image"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearImage}
+                    className="w-9 h-9 rounded-full bg-black/70 text-white flex items-center justify-center"
+                    aria-label="Remove image"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <p className="text-xs text-zinc-500">{t("create.noteReq")}</p>

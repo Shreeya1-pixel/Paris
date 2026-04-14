@@ -125,6 +125,17 @@ export default function MapPage() {
     setAssistantSessionId(id);
   }, []);
 
+  const fallbackFromNearby = useMemo(() => {
+    const fromPlaceArr = nearbyRes?.places?.find((p) => (p.arrondissement ?? "").trim())?.arrondissement;
+    const fromPlaceAddressHead = nearbyRes?.places
+      ?.find((p) => (p.address ?? "").trim())
+      ?.address?.split(",")[0];
+    const fromEventArr = nearbyRes?.events?.find((e) => (e.arrondissement ?? "").trim())?.arrondissement;
+    const fromEventLocation = nearbyRes?.events?.find((e) => (e.location_name ?? "").trim())?.location_name;
+    const picked = (fromPlaceArr ?? fromPlaceAddressHead ?? fromEventArr ?? fromEventLocation ?? "").trim();
+    return picked.length > 0 ? picked : null;
+  }, [nearbyRes?.places, nearbyRes?.events]);
+
   useEffect(() => {
     const hasCoords =
       resolvedLat !== null &&
@@ -138,20 +149,9 @@ export default function MapPage() {
       return;
     }
 
-    const fallbackFromNearby = (): string | null => {
-      const fromPlaceArr = nearbyRes?.places?.find((p) => (p.arrondissement ?? "").trim())?.arrondissement;
-      const fromPlaceAddressHead = nearbyRes?.places
-        ?.find((p) => (p.address ?? "").trim())
-        ?.address?.split(",")[0];
-      const fromEventArr = nearbyRes?.events?.find((e) => (e.arrondissement ?? "").trim())?.arrondissement;
-      const fromEventLocation = nearbyRes?.events?.find((e) => (e.location_name ?? "").trim())?.location_name;
-      const picked = (fromPlaceArr ?? fromPlaceAddressHead ?? fromEventArr ?? fromEventLocation ?? "").trim();
-      return picked.length > 0 ? picked : null;
-    };
-
     const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
     if (!token) {
-      setLocationLabel(fallbackFromNearby());
+      setLocationLabel(fallbackFromNearby);
       return;
     }
 
@@ -236,15 +236,15 @@ export default function MapPage() {
           setLocationLabel(normalizedNominatim);
           return;
         }
-        setLocationLabel(fallbackFromNearby());
+        setLocationLabel(fallbackFromNearby);
       } catch {
-        if (!controller.signal.aborted) setLocationLabel(fallbackFromNearby());
+        if (!controller.signal.aborted) setLocationLabel(fallbackFromNearby);
       }
     };
 
     void loadLocationLabel();
     return () => controller.abort();
-  }, [resolvedLat, resolvedLng, lang, nearbyRes?.places, nearbyRes?.events]);
+  }, [resolvedLat, resolvedLng, lang, fallbackFromNearby]);
 
   const { data: landmarkRes } = useQuery({
     queryKey: ["gemini-landmarks", debounced.lat, debounced.lng],
@@ -675,7 +675,7 @@ export default function MapPage() {
       </div>
 
       <MapTopChrome
-        cityLabel={locationLabel?.trim() || fallbackFromNearby() || undefined}
+        cityLabel={locationLabel?.trim() || fallbackFromNearby || undefined}
         onRecenter={handleRecenter}
       />
 

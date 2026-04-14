@@ -58,6 +58,7 @@ export function MapBottomChrome({
 }: MapBottomChromeProps) {
   const { t } = useLanguage();
   const [chipsVisible, setChipsVisible] = useState(true);
+  const limitReached = remainingAssistant === 0;
 
   const togglePlace = (id: NearbyPlaceFilter) => {
     if (!onPlaceFiltersChange) return;
@@ -150,13 +151,17 @@ export function MapBottomChrome({
 
         {showManualSearchHint && (
           <div className="rounded-xl bg-white/90 border border-zinc-200/80 px-3 py-2 text-center shadow-sm">
-            <p className="text-[11px] text-zinc-700 font-sans">{t("map.manualSearchHint")}</p>
-            <Link
-              href="/discover"
-              className="text-[11px] font-semibold text-amber-800 mt-1 inline-block underline-offset-2 hover:underline"
-            >
-              {t("map.openDiscover")}
-            </Link>
+            <p className="text-[11px] text-zinc-700 font-sans">
+              {limitReached ? t("map.assistantLimitReset") : t("map.manualSearchHint")}
+            </p>
+            {!limitReached && (
+              <Link
+                href="/discover"
+                className="text-[11px] font-semibold text-amber-800 mt-1 inline-block underline-offset-2 hover:underline"
+              >
+                {t("map.openDiscover")}
+              </Link>
+            )}
           </div>
         )}
 
