@@ -214,31 +214,29 @@ async function fetchAssistantPlacesFoursquare(lat: number, lng: number, intent: 
         };
       }[];
     };
-    return (data.results ?? [])
-      .map((r) => {
-        const pLat = Number(r.geocodes?.main?.latitude);
-        const pLng = Number(r.geocodes?.main?.longitude);
-        if (!Number.isFinite(pLat) || !Number.isFinite(pLng) || !r.name) return null;
-        const category = (r.categories?.[0]?.name ?? "place").toLowerCase();
-        return {
-          id: `fsq:${r.fsq_id ?? `${pLat}:${pLng}:${r.name}`}`,
-          name: r.name,
-          category,
-          description: null,
-          arrondissement: r.location?.neighborhood?.[0] ?? r.location?.locality ?? r.location?.admin_region ?? null,
-          address: r.location?.formatted_address ?? null,
-          tags: (r.categories ?? []).map((c) => (c.name ?? "").toLowerCase()).filter(Boolean),
-          lat: pLat,
-          lng: pLng,
-          image_url: null,
-          price_range: null,
-          website_url: null,
-          opening_hours: null,
-          is_featured: false,
-          created_at: new Date().toISOString(),
-        } satisfies AssistantPlaceRow;
-      })
-      .filter((x): x is AssistantPlaceRow => x !== null);
+    return (data.results ?? []).flatMap((r): AssistantPlaceRow[] => {
+      const pLat = Number(r.geocodes?.main?.latitude);
+      const pLng = Number(r.geocodes?.main?.longitude);
+      if (!Number.isFinite(pLat) || !Number.isFinite(pLng) || !r.name) return [];
+      const category = (r.categories?.[0]?.name ?? "place").toLowerCase();
+      return [{
+        id: `fsq:${r.fsq_id ?? `${pLat}:${pLng}:${r.name}`}`,
+        name: r.name,
+        category,
+        description: null,
+        arrondissement: r.location?.neighborhood?.[0] ?? r.location?.locality ?? r.location?.admin_region ?? null,
+        address: r.location?.formatted_address ?? null,
+        tags: (r.categories ?? []).map((c) => (c.name ?? "").toLowerCase()).filter(Boolean),
+        lat: pLat,
+        lng: pLng,
+        image_url: null,
+        price_range: null,
+        website_url: null,
+        opening_hours: null,
+        is_featured: false,
+        created_at: new Date().toISOString(),
+      }];
+    });
   } catch {
     return [];
   }
@@ -271,35 +269,33 @@ async function fetchAssistantPlacesGeoapify(lat: number, lng: number, intent: As
     const data = (await res.json()) as {
       features?: { properties?: { place_id?: string; name?: string; formatted?: string; lat?: number; lon?: number; categories?: string[]; city?: string; suburb?: string } }[];
     };
-    return (data.features ?? [])
-      .map((f) => {
-        const p = f.properties;
-        const pLat = Number(p?.lat);
-        const pLng = Number(p?.lon);
-        if (!Number.isFinite(pLat) || !Number.isFinite(pLng)) return null;
-        const name = p?.name?.trim() || p?.formatted?.split(",")[0]?.trim() || null;
-        if (!name) return null;
-        const n = name.toLowerCase();
-        if (n.includes("colony") || n.includes("tehsil") || n.includes("hospital")) return null;
-        return {
-          id: `geo:${p?.place_id ?? `${pLat}:${pLng}:${name}`}`,
-          name,
-          category: (p?.categories?.[0] ?? "place").toLowerCase(),
-          description: null,
-          arrondissement: p?.suburb ?? p?.city ?? null,
-          address: p?.formatted ?? null,
-          tags: p?.categories ?? [],
-          lat: pLat,
-          lng: pLng,
-          image_url: null,
-          price_range: null,
-          website_url: null,
-          opening_hours: null,
-          is_featured: false,
-          created_at: new Date().toISOString(),
-        } satisfies AssistantPlaceRow;
-      })
-      .filter((x): x is AssistantPlaceRow => x !== null);
+    return (data.features ?? []).flatMap((f): AssistantPlaceRow[] => {
+      const p = f.properties;
+      const pLat = Number(p?.lat);
+      const pLng = Number(p?.lon);
+      if (!Number.isFinite(pLat) || !Number.isFinite(pLng)) return [];
+      const name = p?.name?.trim() || p?.formatted?.split(",")[0]?.trim() || null;
+      if (!name) return [];
+      const n = name.toLowerCase();
+      if (n.includes("colony") || n.includes("tehsil") || n.includes("hospital")) return [];
+      return [{
+        id: `geo:${p?.place_id ?? `${pLat}:${pLng}:${name}`}`,
+        name,
+        category: (p?.categories?.[0] ?? "place").toLowerCase(),
+        description: null,
+        arrondissement: p?.suburb ?? p?.city ?? null,
+        address: p?.formatted ?? null,
+        tags: p?.categories ?? [],
+        lat: pLat,
+        lng: pLng,
+        image_url: null,
+        price_range: null,
+        website_url: null,
+        opening_hours: null,
+        is_featured: false,
+        created_at: new Date().toISOString(),
+      }];
+    });
   } catch {
     return [];
   }
@@ -693,7 +689,7 @@ export async function POST(req: NextRequest) {
           const j = Math.floor(Math.random() * (i + 1));
           [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        pickedPlaceIds = [...new Set([...pickedPlaceIds, ...candidates])].slice(0, 6);
+        pickedPlaceIds = Array.from(new Set(pickedPlaceIds.concat(candidates))).slice(0, 6);
       }
       hydratedPlaces = pickedPlaceIds
         .map((id) => placeById.get(id))

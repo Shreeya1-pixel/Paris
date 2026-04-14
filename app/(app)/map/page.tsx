@@ -20,6 +20,7 @@ import { usePlaces } from "@/hooks/usePlaces";
 import { useSavedEventIds } from "@/hooks/useSavedEvents";
 import { useSavedPlaceIds, useSavedPlaceRows } from "@/hooks/useSavedPlaces";
 import { useAiRecommend } from "@/hooks/useAiRecommend";
+import type { RecommendItem } from "@/lib/ai/recommendTypes";
 
 const MapView = dynamic(
   () => import("@/components/map/MapView").then((m) => ({ default: m.MapView })),
@@ -34,15 +35,13 @@ const NEARBY_RADIUS_KM = 6;
 
 export default function MapPage() {
   const { lang } = useLanguage();
-  const [liveTrack, setLiveTrack] = useState(false);
+  const liveTrack = false;
   const {
     lat: gpsLat,
     lng: gpsLng,
     coords: gpsCoords,
-    loading: locationLoading,
     error: locationError,
     status: locStatus,
-    refresh,
   } = useUserLocation({ watch: liveTrack });
 
   const lat = gpsLat;

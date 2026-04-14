@@ -88,7 +88,9 @@ export function usePlaces(
         const mergedPlaces = Array.from(merged.values())
           .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
           .slice(0, 30);
-        const source = fsqPlaces.length >= geoPlaces.length ? "foursquare" : "geoapify";
+        const source = fsqPlaces.length >= geoPlaces.length
+          ? ("foursquare" as const)
+          : ("geoapify" as const);
         return { places: mergedPlaces, source };
       }
 
@@ -131,8 +133,8 @@ export function usePlaces(
         name: l.name,
         category: asCategory(l.category),
         description: l.description ?? null,
-        address: null,
-        arrondissement: null,
+        address: "",
+        arrondissement: "",
         lat: l.lat,
         lng: l.lng,
         image_url: null,

@@ -47,13 +47,13 @@ export function useAiRecommend() {
         };
 
         if (res.status === 429) {
-          const next = {
+          const next: RecommendState = {
             items: [],
             message: data.message ?? "Too many requests — try again soon.",
             source: "fallback",
             loading: false,
             error: null,
-          } as const;
+          };
           setState(next);
           return { items: next.items, message: next.message, source: next.source, error: next.error };
         }
@@ -68,13 +68,13 @@ export function useAiRecommend() {
           return { items: [], message: "", source: null, error: errMsg };
         }
 
-        const next = {
+        const next: RecommendState = {
           items: data.items ?? [],
           message: data.message ?? "",
           source: data.source ?? null,
           loading: false,
           error: null,
-        } as const;
+        };
         setState(next);
         return { items: next.items, message: next.message, source: next.source, error: next.error };
       } catch {
