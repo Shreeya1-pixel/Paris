@@ -83,7 +83,7 @@ export function PlaceMapLabel({
     );
   }
 
-  /* ── Expanded label: dot + emoji bubble + name only ── */
+  /* ── Expanded label: dot + emoji bubble only ── */
   return (
     <div
       className="relative flex items-center cursor-pointer touch-manipulation"
@@ -106,8 +106,8 @@ export function PlaceMapLabel({
         {dot}
       </div>
 
-      {/* Emoji bubble + name */}
-      <div className="flex items-center gap-1.5 pl-3">
+      {/* Emoji bubble only */}
+      <div className="flex items-center pl-3">
         {/* Emoji circle */}
         <div
           className="rounded-full bg-white flex items-center justify-center shrink-0"
@@ -126,22 +126,6 @@ export function PlaceMapLabel({
           {emoji}
         </div>
 
-        {/* Name only — no description */}
-        <span
-          className="font-sans font-semibold leading-tight whitespace-nowrap"
-          style={{
-            fontSize: 12.5,
-            color: "#111827",
-            letterSpacing: "-0.01em",
-            textShadow:
-              "0 1px 0 rgba(255,255,255,0.98), 0 -1px 0 rgba(255,255,255,0.9), 1px 0 0 rgba(255,255,255,0.9), -1px 0 0 rgba(255,255,255,0.9)",
-            maxWidth: "min(140px, 40vw)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {place.name}
-        </span>
       </div>
     </div>
   );
