@@ -39,7 +39,7 @@ interface MapBottomChromeProps {
   onPlaceFiltersChange?: (next: NearbyPlaceFilter[]) => void;
   /** Fires Gemini assistant with this query — location-aware, shows results on map. */
   onAssistantChip?: (query: string) => void;
-  /** Assistant turns left (from server); omit to hide. */
+  /** Assistant turns left (from server); only used to detect limit reached. */
   remainingAssistant?: number | null;
   /** Show fallback hint (rate limit, API cap, location blocked). */
   showManualSearchHint?: boolean;
@@ -142,9 +142,9 @@ export function MapBottomChrome({
           )}
         </AnimatePresence>
 
-        {remainingAssistant != null && (
+        {remainingAssistant === 0 && (
           <p className="text-[10px] text-zinc-600 font-sans px-1 text-center">
-            {t("map.assistantRemaining").replace("{{n}}", String(remainingAssistant))}
+            {t("map.assistantLimitReset")}
           </p>
         )}
 

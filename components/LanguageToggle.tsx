@@ -20,8 +20,8 @@ export function LanguageToggle({
   const { lang, setLang, t } = useLanguage();
 
   const options: { code: Language; label: string }[] = [
-    { code: "en", label: t("profile.langEn") },
-    { code: "fr", label: t("profile.langFr") },
+    { code: "en", label: "🇬🇧" },
+    { code: "fr", label: "🇫🇷" },
   ];
 
   return (
@@ -43,7 +43,7 @@ export function LanguageToggle({
             onClick={() => setLang(code)}
             className={cn(
               "relative rounded-full font-semibold transition-colors",
-              size === "sm" ? "px-2.5 py-1 text-[10px]" : "px-3 py-1.5 text-xs",
+              size === "sm" ? "px-2.5 py-1 text-[13px] leading-none" : "px-3 py-1.5 text-[15px] leading-none",
               active ? "text-white z-10" : "text-zinc-500 hover:text-zinc-800"
             )}
           >

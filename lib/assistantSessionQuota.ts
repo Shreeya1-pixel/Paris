@@ -1,22 +1,23 @@
 /**
- * Limits Gemini assistant turns per browser session (server-side).
+ * Limits Gemini assistant turns per user per calendar day (server-side).
  * Client sends a stable `sessionId` (e.g. sessionStorage UUID).
  */
 
-const WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_ASSISTANT_TURNS = 30;
+const MAX_ASSISTANT_TURNS = 5;
 
 interface Entry {
   count: number;
-  windowStart: number;
+  dayKey: string;
 }
 
 const store = new Map<string, Entry>();
 
-function prune(key: string) {
-  const e = store.get(key);
-  if (!e) return;
-  if (Date.now() - e.windowStart > WINDOW_MS) store.delete(key);
+function currentDayKey(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 export function assistantQuotaStatus(sessionKey: string): {
@@ -24,11 +25,10 @@ export function assistantQuotaStatus(sessionKey: string): {
   remaining: number;
 } {
   const key = sessionKey.trim() || "__anonymous__";
-  prune(key);
-  const now = Date.now();
+  const dayKey = currentDayKey();
   let e = store.get(key);
-  if (!e || now - e.windowStart > WINDOW_MS) {
-    e = { count: 0, windowStart: now };
+  if (!e || e.dayKey !== dayKey) {
+    e = { count: 0, dayKey };
     store.set(key, e);
   }
   const remaining = Math.max(0, MAX_ASSISTANT_TURNS - e.count);
@@ -38,10 +38,10 @@ export function assistantQuotaStatus(sessionKey: string): {
 /** Call after a successful Gemini assistant response. */
 export function consumeAssistantTurn(sessionKey: string): number {
   const key = sessionKey.trim() || "__anonymous__";
-  const now = Date.now();
+  const dayKey = currentDayKey();
   let e = store.get(key);
-  if (!e || now - e.windowStart > WINDOW_MS) {
-    e = { count: 0, windowStart: now };
+  if (!e || e.dayKey !== dayKey) {
+    e = { count: 0, dayKey };
     store.set(key, e);
   }
   e.count++;

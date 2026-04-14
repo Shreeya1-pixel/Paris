@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -23,6 +24,12 @@ export default function LoginPage() {
   const [authError, setAuthError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSplash(false), 1700);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -85,6 +92,36 @@ export default function LoginPage() {
     }
   };
 
+  if (showSplash) {
+    return (
+      <div className="min-h-dvh bg-black flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.35, ease: "easeOut" }}
+          className="flex flex-col items-center"
+        >
+          <Image
+            src="/ow-logo.png"
+            alt="Openworld logo"
+            width={196}
+            height={196}
+            priority
+            className="w-44 h-44 sm:w-48 sm:h-48 object-contain drop-shadow-[0_8px_20px_rgba(0,0,0,0.18)]"
+          />
+          <h1
+            className="mt-5 text-[44px] leading-none tracking-tight text-white"
+            style={{ fontFamily: "SF Pro Display, SF Pro Text, Helvetica, Arial, sans-serif" }}
+          >
+            <span className="font-black">Open</span>
+            <span className="font-normal">world</span>
+          </h1>
+          <p className="mt-3 text-3xl font-light text-zinc-400 tracking-wide">Loading...</p>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="noise-overlay min-h-dvh bg-[var(--bg-base)] flex items-center justify-center p-4">
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
@@ -102,8 +139,12 @@ export default function LoginPage() {
         </div>
 
         <div className="text-center mb-8">
-          <h1 className="font-display text-4xl font-semibold text-[var(--accent-gold)] tracking-tight">
-            Openworld
+          <h1
+            className="text-4xl tracking-tight text-[var(--accent-gold)]"
+            style={{ fontFamily: "SF Pro Display, SF Pro Text, Helvetica, Arial, sans-serif" }}
+          >
+            <span className="font-black">Open</span>
+            <span className="font-normal">world</span>
           </h1>
           <p className="font-display text-lg text-[var(--text-secondary)] mt-0.5 tracking-wide">
             Paris

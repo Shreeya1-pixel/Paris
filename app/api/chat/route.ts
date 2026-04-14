@@ -7,7 +7,7 @@ export const maxDuration = 30;
  *
  *  Assistant mode — Gemini AI with user coordinates + live events context
  *    Used by the map chatbot. Gemini answers about the user's real location.
- *    3 turns per session.
+ *    5 turns per user per day.
  *
  *  Tier 1 — Local Knowledge Base ($0)
  *    Serves 55 curated Paris spots instantly via keyword matching.
@@ -504,7 +504,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── Assistant mode: Gemini with real coordinates, 3 turns / session ─────
+  // ── Assistant mode: Gemini with real coordinates, 5 turns / day ─────────
   if (assistantMode) {
     const quotaKey = sessionId?.trim() || `ip:${ip}`;
     const aq = assistantQuotaStatus(quotaKey);
@@ -513,7 +513,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         events: [],
         places: [],
-        message: "You've used all your assistant questions for this session. Try manual search or the Discover tab.",
+        message: "Chatbot limit resets tomorrow",
         tier: "assistant_limit",
         manualSearch: true,
         remainingAssistant: 0,

@@ -21,6 +21,7 @@ import { useSavedEventIds } from "@/hooks/useSavedEvents";
 import { useSavedPlaceIds, useSavedPlaceRows } from "@/hooks/useSavedPlaces";
 import { useAiRecommend } from "@/hooks/useAiRecommend";
 import type { RecommendItem } from "@/lib/ai/recommendTypes";
+import { X } from "lucide-react";
 
 const MapView = dynamic(
   () => import("@/components/map/MapView").then((m) => ({ default: m.MapView })),
@@ -69,6 +70,7 @@ export default function MapPage() {
   const [assistantSessionId, setAssistantSessionId] = useState("");
   const [assistantRemaining, setAssistantRemaining] = useState<number | null>(null);
   const [manualSearchHint, setManualSearchHint] = useState(false);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownToUser = useRef(false);
@@ -122,6 +124,112 @@ export default function MapPage() {
     }
     setAssistantSessionId(id);
   }, []);
+
+  useEffect(() => {
+    const hasCoords =
+      resolvedLat !== null &&
+      resolvedLng !== null &&
+      Number.isFinite(resolvedLat) &&
+      Number.isFinite(resolvedLng) &&
+      resolvedLat !== 0 &&
+      resolvedLng !== 0;
+    if (!hasCoords) {
+      setLocationLabel(null);
+      return;
+    }
+
+    const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
+    if (!token) {
+      setLocationLabel(`${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`);
+      return;
+    }
+
+    const controller = new AbortController();
+    const fallback = `${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`;
+
+    const loadLocationLabel = async () => {
+      const resolveViaMapbox = async (): Promise<string | null> => {
+        const url = new URL(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(String(resolvedLng))},${encodeURIComponent(String(resolvedLat))}.json`
+        );
+        url.searchParams.set("types", "neighborhood,locality,place,district,region");
+        url.searchParams.set("language", lang);
+        url.searchParams.set("limit", "5");
+        url.searchParams.set("access_token", token);
+        const res = await fetch(url.toString(), { signal: controller.signal });
+        if (!res.ok) return null;
+        const data = (await res.json()) as {
+          features?: Array<{
+            text?: string;
+            place_name?: string;
+            id?: string;
+          }>;
+        };
+        const features = data.features ?? [];
+        const primary =
+          features.find((f) => f.id?.startsWith("neighborhood")) ??
+          features.find((f) => f.id?.startsWith("locality")) ??
+          features.find((f) => f.id?.startsWith("place")) ??
+          features[0];
+        return primary?.text ?? primary?.place_name ?? null;
+      };
+
+      const resolveViaNominatim = async (): Promise<string | null> => {
+        const url = new URL("https://nominatim.openstreetmap.org/reverse");
+        url.searchParams.set("format", "jsonv2");
+        url.searchParams.set("lat", String(resolvedLat));
+        url.searchParams.set("lon", String(resolvedLng));
+        url.searchParams.set("accept-language", lang === "fr" ? "fr,en" : "en,fr");
+        const res = await fetch(url.toString(), {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as {
+          name?: string;
+          display_name?: string;
+          address?: {
+            neighbourhood?: string;
+            suburb?: string;
+            quarter?: string;
+            city?: string;
+            town?: string;
+            village?: string;
+            state?: string;
+          };
+        };
+        const addr = data.address;
+        return (
+          data.name ??
+          addr?.neighbourhood ??
+          addr?.suburb ??
+          addr?.quarter ??
+          addr?.city ??
+          addr?.town ??
+          addr?.village ??
+          addr?.state ??
+          data.display_name?.split(",")[0]?.trim() ??
+          null
+        );
+      };
+
+      try {
+        const mapboxLabel = await resolveViaMapbox();
+        if (mapboxLabel) {
+          setLocationLabel(mapboxLabel);
+          return;
+        }
+        const nominatimLabel = await resolveViaNominatim();
+        const label = nominatimLabel ?? fallback;
+        setLocationLabel(label);
+      } catch {
+        if (!controller.signal.aborted) setLocationLabel(fallback);
+      }
+    };
+
+    void loadLocationLabel();
+    return () => controller.abort();
+  }, [resolvedLat, resolvedLng, lang]);
 
   const { data: landmarkRes } = useQuery({
     queryKey: ["gemini-landmarks", debounced.lat, debounced.lng],
@@ -552,11 +660,7 @@ export default function MapPage() {
       </div>
 
       <MapTopChrome
-        cityLabel={
-          resolvedLat != null && resolvedLng != null
-            ? `${resolvedLat.toFixed(2)}°, ${resolvedLng.toFixed(2)}°`
-            : undefined
-        }
+        cityLabel={locationLabel ?? undefined}
         onRecenter={handleRecenter}
       />
 
@@ -566,7 +670,18 @@ export default function MapPage() {
           className="absolute left-3 right-3 z-30 pointer-events-auto"
           style={{ bottom: "calc(124px + env(safe-area-inset-bottom, 0px))" }}
         >
-          <div className="rounded-2xl bg-white/92 border border-zinc-200 shadow-lg backdrop-blur-sm px-2.5 py-2 space-y-2">
+          <div className="relative rounded-2xl bg-white/92 border border-zinc-200 shadow-lg backdrop-blur-sm px-2.5 py-2 pt-10 space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                setHighlightedPlaces([]);
+                setAiMessage("");
+              }}
+              className="absolute top-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white shadow-md transition-colors hover:bg-zinc-700"
+              aria-label="Close suggestions"
+            >
+              <X className="h-4 w-4" />
+            </button>
             {highlightedPlaces.slice(0, 3).map((p) => (
               <div
                 key={`chat-suggest-${p.id}`}
@@ -597,8 +712,16 @@ export default function MapPage() {
 
       {/* Chat AI message banner fallback (when no place cards returned) */}
       {aiMessage && highlightedPlaces.length === 0 && !showRecommend && (
-        <div className="absolute left-4 right-4 z-20 px-3 py-2 rounded-2xl bg-white/90 border border-zinc-200 text-xs text-zinc-600 shadow-sm"
+        <div className="absolute left-4 right-4 z-20 px-3 py-2 pr-10 rounded-2xl bg-white/90 border border-zinc-200 text-xs text-zinc-600 shadow-sm"
           style={{ top: "calc(max(48px, env(safe-area-inset-top, 0px)) + 56px)" }}>
+          <button
+            type="button"
+            onClick={() => setAiMessage("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-white hover:bg-zinc-700 transition-colors"
+            aria-label="Close suggestion message"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
           {aiMessage}
         </div>
       )}
