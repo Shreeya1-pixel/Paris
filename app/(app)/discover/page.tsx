@@ -56,23 +56,6 @@ export default function DiscoverPage() {
     hasQueryCoords ||
     (rawLat !== null && rawLng !== null && rawLat !== 0 && rawLng !== 0);
 
-  const { data: liveDiscover, isLoading: liveDiscoverLoading } = useQuery({
-    queryKey: ["discover-live", activeLat, activeLng, fresh ? "fresh" : "base"],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/discover/live?lat=${encodeURIComponent(String(activeLat))}&lng=${encodeURIComponent(String(activeLng))}`
-      );
-      if (!res.ok) return { events: [] as Event[], configured: false };
-      return res.json() as Promise<{
-        events: Event[];
-        configured?: boolean;
-      }>;
-    },
-    staleTime: fresh ? 0 : 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
-    enabled: hasCoords,
-  });
-
   const { data: discover, isLoading: discoverLoading } = useQuery({
     queryKey: ["discover", activeLat, activeLng, fresh ? "fresh" : "base"],
     queryFn: async () => {
@@ -186,12 +169,6 @@ export default function DiscoverPage() {
     );
   }, [discover?.nearYou, withSavedEvent, withSavedPlace]);
 
-  const liveEvents = useMemo(
-    () => (liveDiscover?.events ?? []).map(withSavedEvent),
-    [liveDiscover?.events, withSavedEvent]
-  );
-  const liveConfigured = liveDiscover?.configured === true;
-
   const searchEvents = useMemo(
     () => (searchData?.events ?? []).map(withSavedEvent),
     [searchData?.events, withSavedEvent]
@@ -245,9 +222,6 @@ export default function DiscoverPage() {
         searchPlaces={searchPlaces}
         searchLoading={searchLoading}
         discoverLoading={discoverLoading}
-        liveEvents={liveEvents}
-        liveLoading={liveDiscoverLoading}
-        liveConfigured={liveConfigured}
         isPersonalisedFeed={feedData?.isPersonalised}
         onEventClick={setDetailEvent}
         onPlaceClick={setDetailPlace}

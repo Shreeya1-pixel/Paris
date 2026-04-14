@@ -40,8 +40,6 @@ interface MapViewProps {
   geminiLandmarks?: GeminiMapLandmark[];
   /** Top nearby Foursquare places shown as auto-open popups */
   foursquarePopups?: Place[];
-  /** Nearby Ticketmaster events shown as auto-open popups on the map */
-  ticketmasterEvents?: Event[];
 }
 
 /** Emoji for a place category cluster bubble */
@@ -89,7 +87,6 @@ export function MapView({
   onSpotlightConsumed,
   geminiLandmarks = [],
   foursquarePopups = [],
-  ticketmasterEvents = [],
 }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownRef = useRef(false);
@@ -103,8 +100,6 @@ export function MapView({
   const [landmarkPopupIds, setLandmarkPopupIds] = useState<string[]>([]);
 
   const [fsqPopupIds, setFsqPopupIds] = useState<string[]>([]);
-
-  const [tmPopupIds, setTmPopupIds] = useState<string[]>([]);
 
   // ── Zoom tracking via requestAnimationFrame ───────────────────────────────
   const handleMove = useCallback(() => {
@@ -210,9 +205,6 @@ export function MapView({
   useEffect(() => {
     if (foursquarePopups.length === 0) setFsqPopupIds([]);
   }, [foursquarePopups.length]);
-  useEffect(() => {
-    if (ticketmasterEvents.length === 0) setTmPopupIds([]);
-  }, [ticketmasterEvents.length]);
 
   useEffect(() => {
     if (!spotlightPlaceIds.length) {
@@ -303,7 +295,6 @@ export function MapView({
     onPlaceSelect?.(null);
     setLandmarkPopupIds([]);
     setFsqPopupIds([]);
-    setTmPopupIds([]);
   }, [onEventSelect, onPlaceSelect]);
 
   if (!MAPBOX_TOKEN.trim()) {
@@ -353,7 +344,6 @@ export function MapView({
                 prev[0] === L.id ? [] : [L.id]
               );
               setFsqPopupIds([]);
-              setTmPopupIds([]);
             }}
           >
             <div
@@ -462,88 +452,6 @@ export function MapView({
           );
         })}
 
-      {/* Ticketmaster event popups */}
-      {ticketmasterEvents
-        .filter((e) => tmPopupIds.includes(e.id))
-        .map((e) => {
-          const distLabel =
-            e.distance_km != null
-              ? e.distance_km < 1
-                ? `${Math.round(e.distance_km * 1000)} m away`
-                : `${e.distance_km.toFixed(1)} km away`
-              : null;
-          const dateStr = e.start_time
-            ? new Date(e.start_time).toLocaleDateString(undefined, {
-                weekday: "short", month: "short", day: "numeric",
-              })
-            : null;
-          return (
-            <Popup
-              key={`tm-popup-${e.id}`}
-              longitude={e.lng}
-              latitude={e.lat}
-              anchor="top"
-              closeButton={false}
-              closeOnClick={false}
-              offset={14}
-              className="z-20"
-              onClose={() => setTmPopupIds((prev) => prev.filter((id) => id !== e.id))}
-            >
-              <div className="w-[260px] max-w-[80vw]">
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-zinc-900 leading-snug line-clamp-2">
-                      {e.title}
-                    </p>
-                    {e.location_name && (
-                      <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{e.location_name}</p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setTmPopupIds((prev) => prev.filter((id) => id !== e.id))}
-                    className="ml-auto shrink-0 text-zinc-400 hover:text-zinc-700 leading-none -mt-0.5 -mr-0.5"
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  {dateStr && (
-                    <span className="text-[10px] bg-zinc-100 text-zinc-600 rounded-full px-2 py-0.5">
-                      🗓 {dateStr}
-                    </span>
-                  )}
-                  {distLabel && (
-                    <span className="text-[10px] bg-zinc-100 text-zinc-600 rounded-full px-2 py-0.5">
-                      {distLabel}
-                    </span>
-                  )}
-                </div>
-                {e.ticket_url ? (
-                  <a
-                    href={e.ticket_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
-                  >
-                    Get tickets
-                  </a>
-                ) : (
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${e.lat},${e.lng}`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2.5 inline-flex items-center rounded-full bg-zinc-900 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 transition-colors"
-                  >
-                    Get directions
-                  </a>
-                )}
-              </div>
-            </Popup>
-          );
-        })}
-
       {showUserMarker && userLocation && (
         <Marker longitude={userLocation.lng} latitude={userLocation.lat} anchor="bottom">
           <div className="flex flex-col items-center pointer-events-none select-none">
@@ -575,15 +483,6 @@ export function MapView({
               e.originalEvent.stopPropagation();
               ignoreNextMapClick.current = true;
               lastMarkerClickMs.current = Date.now();
-              if (event.id.startsWith("tm-")) {
-                setTmPopupIds((prev) =>
-                  prev[0] === event.id ? [] : [event.id]
-                );
-                setLandmarkPopupIds([]);
-                setFsqPopupIds([]);
-                onEventSelect(null);
-                return;
-              }
               onEventSelect(isSelected ? null : event);
             }}
           >
@@ -627,7 +526,6 @@ export function MapView({
                 prev[0] === place.id ? [] : [place.id]
               );
               setLandmarkPopupIds([]);
-              setTmPopupIds([]);
             }}
           >
             <PlaceMapLabel

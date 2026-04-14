@@ -265,75 +265,22 @@ export default function MapPage() {
 
   const geminiLandmarks = landmarkRes?.landmarks ?? [];
 
-  const { data: liveDiscoverRes } = useQuery({
-    queryKey: ["discover-live", debounced.lat, debounced.lng],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/discover/live?lat=${encodeURIComponent(String(debounced.lat))}&lng=${encodeURIComponent(String(debounced.lng))}`
-      );
-      if (!res.ok) return { events: [] as Event[] };
-      return res.json() as Promise<{ events: Event[] }>;
-    },
-    staleTime: 5 * 60 * 1000,
-    enabled:
-      resolvedLat !== null &&
-      resolvedLng !== null &&
-      debounced.lat !== 0 &&
-      debounced.lng !== 0,
-  });
-
   const discoverContextEvents = useMemo(() => {
-    type CtxEv = {
-      id: string;
-      title: string;
-      start_time: string;
-      source: "app" | "ticketmaster" | "live";
-      ticket_url: string | null;
-    };
-    const fromApp: CtxEv[] = (nearbyRes?.events ?? []).slice(0, 22).map((e) => ({
+    return (nearbyRes?.events ?? []).slice(0, 22).map((e) => ({
       id: e.id,
       title: e.title,
       start_time: e.start_time,
-      source: "app",
+      source: "app" as const,
       ticket_url: e.ticket_url,
     }));
-    const fromLive: CtxEv[] = (liveDiscoverRes?.events ?? []).slice(0, 22).map((e) => ({
-      id: e.id,
-      title: e.title,
-      start_time: e.start_time,
-      source: e.id.startsWith("tm-") ? "ticketmaster" : "live",
-      ticket_url: e.ticket_url,
-    }));
-    const seen = new Set<string>();
-    const merged: CtxEv[] = [];
-    for (const x of [...fromApp, ...fromLive]) {
-      if (seen.has(x.id)) continue;
-      seen.add(x.id);
-      merged.push(x);
-    }
-    return merged;
-  }, [nearbyRes?.events, liveDiscoverRes?.events]);
+  }, [nearbyRes?.events]);
 
   const allEvents = useMemo(() => {
-    const byId = new Map<string, Event>();
-    for (const e of nearbyRes?.events ?? []) {
-      byId.set(e.id, { ...e, is_saved: savedEventIds.has(e.id) });
-    }
-    for (const e of liveDiscoverRes?.events ?? []) {
-      if (!byId.has(e.id)) {
-        byId.set(e.id, { ...e, is_saved: savedEventIds.has(e.id) });
-      }
-    }
-    return Array.from(byId.values());
-  }, [nearbyRes?.events, liveDiscoverRes?.events, savedEventIds]);
-
-  // Top 5 nearest Ticketmaster events for map popups
-  const ticketmasterMapEvents = useMemo(() => {
-    return [...(liveDiscoverRes?.events ?? [])]
-      .filter((e) => e.id.startsWith("tm-") && e.lat && e.lng)
-      .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
-      .slice(0, 5);
-  }, [liveDiscoverRes?.events]);
+    return (nearbyRes?.events ?? []).map((e) => ({
+      ...e,
+      is_saved: savedEventIds.has(e.id),
+    }));
+  }, [nearbyRes?.events, savedEventIds]);
 
   const mapPlacesRaw = useMemo(() => {
     const byId = new Map<string, Place>();
@@ -682,7 +629,6 @@ export default function MapPage() {
           onSpotlightConsumed={() => setSpotlightPlaceIds([])}
           geminiLandmarks={geminiLandmarks}
           foursquarePopups={foursquarePopups}
-          ticketmasterEvents={ticketmasterMapEvents}
         />
       </div>
 

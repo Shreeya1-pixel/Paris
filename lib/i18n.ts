@@ -122,9 +122,6 @@ export const translations = {
     "discover.searchResults": "Search results",
     "discover.empty": "Nothing here yet",
     "discover.emptySub": "Create an event or check back when new listings go live.",
-    "discover.liveNearYou": "Live tickets & shows",
-    "discover.liveNearYouSubtitle": "Ticketmaster Discovery — within 200 mi, upcoming",
-    "discover.liveEmpty": "Searching wider area... No live events found nearby yet.",
 
     "place.gathering": "Gathering details…",
     "place.insightUnavailable": "Could not load AI description.",
@@ -376,9 +373,6 @@ export const translations = {
     "discover.searchResults": "Résultats",
     "discover.empty": "Rien pour le moment",
     "discover.emptySub": "Créez un événement ou revenez quand de nouvelles annonces seront en ligne.",
-    "discover.liveNearYou": "Billets & concerts live",
-    "discover.liveNearYouSubtitle": "Ticketmaster Discovery — dans 200 mi, à venir",
-    "discover.liveEmpty": "Recherche dans un rayon plus large… Aucun event trouvé pour le moment.",
 
     "place.gathering": "Collecte des détails…",
     "place.insightUnavailable": "Impossible de charger la description IA.",
