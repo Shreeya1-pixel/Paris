@@ -1,23 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Cormorant_Garamond, Inter } from "next/font/google";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AbortErrorSuppressor } from "@/components/AbortErrorSuppressor";
 import "./globals.css";
-
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-cormorant",
-  display: "swap",
-});
-
-const geist = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-geist",
-  display: "swap",
-});
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -42,9 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${cormorant.variable} ${geist.variable} font-sans antialiased min-h-dvh text-[var(--text-primary)]`}
-      >
+      <body className="font-sans antialiased min-h-dvh text-[var(--text-primary)]">
         <AbortErrorSuppressor />
         <QueryProvider>
           <LanguageProvider>

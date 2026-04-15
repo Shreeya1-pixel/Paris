@@ -109,10 +109,7 @@ export default function LoginPage() {
             priority
             className="w-44 h-44 sm:w-48 sm:h-48 object-contain drop-shadow-[0_8px_20px_rgba(0,0,0,0.18)]"
           />
-          <h1
-            className="mt-5 text-[44px] leading-none tracking-tight text-white"
-            style={{ fontFamily: "SF Pro Display, SF Pro Text, Helvetica, Arial, sans-serif" }}
-          >
+          <h1 className="mt-5 text-[44px] leading-none tracking-tight text-white font-sans">
             <span className="font-black">Open</span>
             <span className="font-normal">world</span>
           </h1>
@@ -139,10 +136,7 @@ export default function LoginPage() {
         </div>
 
         <div className="text-center mb-8">
-          <h1
-            className="text-4xl tracking-tight text-[var(--accent-gold)]"
-            style={{ fontFamily: "SF Pro Display, SF Pro Text, Helvetica, Arial, sans-serif" }}
-          >
+          <h1 className="text-4xl tracking-tight text-[var(--accent-gold)] font-sans">
             <span className="font-black">Open</span>
             <span className="font-normal">world</span>
           </h1>

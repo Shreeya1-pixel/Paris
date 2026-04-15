@@ -10,8 +10,19 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        display: ["var(--font-cormorant)", "Georgia", "serif"],
-        sans:    ["var(--font-geist)", "system-ui", "sans-serif"],
+        sans:    ["var(--font-sf-pro)"],
+        display: ["var(--font-sf-pro)"],
+        mono: [
+          "ui-monospace",
+          "SFMono-Regular",
+          "SF Mono",
+          "Menlo",
+          "Monaco",
+          "Consolas",
+          "Liberation Mono",
+          "Courier New",
+          "monospace",
+        ],
       },
       colors: {
         "bg-base":           "var(--bg-base)",

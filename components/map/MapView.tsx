@@ -566,7 +566,7 @@ export function MapView({
               <span className="text-base leading-none">{emoji}</span>
               <span
                 className="text-[11px] font-bold text-zinc-800 leading-none"
-                style={{ fontFamily: "system-ui, sans-serif" }}
+                style={{ fontFamily: "var(--font-sf-pro)" }}
               >
                 {cluster.count}
               </span>

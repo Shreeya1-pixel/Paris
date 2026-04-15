@@ -2,10 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
-
 /* ── Openworld reference UI (light glass + map chrome) ───────── */
 :root {
+  /* SF Pro on Apple; graceful fallbacks elsewhere (cannot ship SF Pro as a webfont). */
+  --font-sf-pro:
+    "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Helvetica, Arial, sans-serif;
   --ow-charcoal: #27272a;
   --ow-charcoal-deep: #18181b;
   --ow-silver: #e4e4e7;
@@ -71,7 +73,7 @@ html {
 body {
   color: var(--text-primary);
   background: var(--bg-base);
-  font-family: var(--font-geist, "Inter"), system-ui, sans-serif;
+  font-family: var(--font-sf-pro);
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
@@ -161,10 +163,10 @@ body {
 
 .font-display,
 .heading {
-  font-family: var(--font-cormorant, "Cormorant Garamond"), Georgia, serif;
+  font-family: var(--font-sf-pro);
 }
 .body {
-  font-family: var(--font-geist, "Inter"), system-ui, sans-serif;
+  font-family: var(--font-sf-pro);
 }
 
 @layer utilities {
