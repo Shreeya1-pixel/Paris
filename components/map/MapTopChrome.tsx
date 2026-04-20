@@ -25,7 +25,7 @@ export function MapTopChrome({ onRecenter }: MapTopChromeProps) {
 
       {/* Floating action buttons — z-[45] keeps them above the AI panel (z-35) and chrome (z-40) */}
       <div className="absolute right-4 z-[45] flex flex-col gap-2 pointer-events-none"
-        style={{ bottom: "calc(144px + env(safe-area-inset-bottom, 0px))" }}>
+        style={{ bottom: "calc(216px + env(safe-area-inset-bottom, 0px))" }}>
         <motion.button
           type="button"
           whileTap={{ scale: 0.94 }}

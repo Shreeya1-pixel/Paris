@@ -12,6 +12,9 @@ import { clusterPlaces, clusterCellForZoom, CLUSTER_ZOOM_THRESHOLD } from "@/uti
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
 
+/** Zoom when centered on the user after GPS — street / few-block context */
+const USER_LOCATION_ZOOM = 15;
+
 interface MapViewProps {
   events: Event[];
   places?: Place[];
@@ -96,7 +99,9 @@ export function MapView({
   const poiNoiseFilteredRef = useRef(false);
 
   const [spotlightOpen, setSpotlightOpen] = useState<string[]>([]);
-  const [mapZoom, setMapZoom] = useState(initialCenter ? 13 : 2);
+  const [mapZoom, setMapZoom] = useState(initialCenter ? USER_LOCATION_ZOOM : 2);
+  /** True after MapGL `onLoad` — ensures post-GPS fly runs even if `flyToUserOnce` fired first */
+  const [mapReady, setMapReady] = useState(false);
   const [landmarkPopupIds, setLandmarkPopupIds] = useState<string[]>([]);
 
   const [fsqPopupIds, setFsqPopupIds] = useState<string[]>([]);
@@ -174,6 +179,7 @@ export function MapView({
     }
     const zoom = mapRef.current?.getZoom() ?? mapZoom;
     setMapZoom(zoom);
+    setMapReady(true);
   }, [onMapRef, mapZoom]);
 
   const handleMoveEnd = useCallback(() => {
@@ -189,15 +195,16 @@ export function MapView({
   }, [onBoundsChange]);
 
   useEffect(() => {
-    if (!flyToUserOnce || hasFlownRef.current || !mapRef.current) return;
+    if (!flyToUserOnce || hasFlownRef.current) return;
+    if (!mapReady || !mapRef.current) return;
     hasFlownRef.current = true;
     mapRef.current.flyTo({
       center: [flyToUserOnce.lng, flyToUserOnce.lat],
-      zoom: 13.5,
+      zoom: USER_LOCATION_ZOOM,
       essential: true,
       duration: 1200,
     });
-  }, [flyToUserOnce]);
+  }, [flyToUserOnce, mapReady]);
 
   useEffect(() => {
     if (geminiLandmarks.length === 0) setLandmarkPopupIds([]);
@@ -317,7 +324,7 @@ export function MapView({
       initialViewState={{
         longitude: initialCenter?.lng ?? 0,
         latitude: initialCenter?.lat ?? 20,
-        zoom: initialCenter ? 13 : 2,
+        zoom: initialCenter ? USER_LOCATION_ZOOM : 2,
       }}
       style={{ width: "100%", height: "100%" }}
       mapStyle={MAP_STYLE}

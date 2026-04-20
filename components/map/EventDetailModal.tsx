@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Heart, Share2, MapPin, Calendar, X, Users, ExternalLink } from "lucide-react";
 import type { Event } from "@/types";
@@ -35,9 +34,7 @@ export function EventDetailModal({
     categoryLabel,
     vibeLabel,
   } = useLanguage();
-  const pathname = usePathname();
-  const onMap = pathname === "/map";
-  const navOffset = onMap ? "0px" : "72px";
+  const navOffset = "72px";
 
   if (!event) return null;
 

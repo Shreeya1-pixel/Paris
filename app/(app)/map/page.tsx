@@ -575,7 +575,7 @@ export default function MapPage() {
 
   const handleRecenter = useCallback(() => {
     if (lat != null && lng != null) {
-      mapRef.current?.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
+      mapRef.current?.flyTo({ center: [lng, lat], zoom: 15, duration: 800 });
     }
   }, [lat, lng]);
 

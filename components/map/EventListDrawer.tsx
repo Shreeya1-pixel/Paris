@@ -19,12 +19,12 @@ export function EventListDrawer({ events, onEventClick, onSaveToggle }: EventLis
   const constraintsRef = useRef<HTMLDivElement>(null);
 
   const peekHeight = 140;
-  const expanded = "calc(100dvh - 168px - env(safe-area-inset-top, 0px) - 40px)";
+  const expanded = "calc(100dvh - 240px - env(safe-area-inset-top, 0px) - 40px)";
 
   return (
     <motion.div
       ref={constraintsRef}
-      className="absolute left-0 right-0 z-30 rounded-t-[24px] overflow-hidden bottom-[168px] md:bottom-[168px]"
+      className="absolute left-0 right-0 z-30 rounded-t-[24px] overflow-hidden bottom-[240px] md:bottom-[240px]"
       style={{
         background: "rgba(255,255,255,0.82)",
         backdropFilter: "blur(20px)",

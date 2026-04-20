@@ -1,4 +1,4 @@
--- Openworld Paris: Full schema
+ -- Openworld Paris: Full schema
 -- Run this in Supabase SQL Editor
 
 -- ─── Users ────────────────────────────────────────────────────────────────────

@@ -79,7 +79,7 @@ export function AiRecommendPanel({
           style={{
             /* sits above the search bar (64px) + safe area; when filter chips are also
                visible the chrome is ~120px — the panel's rounded top clears it cleanly */
-            bottom: "calc(80px + env(safe-area-inset-bottom, 0px))",
+            bottom: "calc(152px + env(safe-area-inset-bottom, 0px))",
             maxHeight: "58dvh",
           }}
         >

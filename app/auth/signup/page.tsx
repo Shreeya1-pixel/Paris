@@ -85,7 +85,7 @@ export default function SignupPage() {
       setAuthError(error.message);
       setLoading(false);
     } else {
-      router.push("/onboarding");
+      router.push("/auth/clear-guest?next=/onboarding");
     }
   };
 
@@ -243,6 +243,13 @@ export default function SignupPage() {
           </svg>
           {googleLoading ? "…" : t("auth.google")}
         </button>
+
+        <Link
+          href="/auth/guest"
+          className="mt-3 w-full h-11 rounded-pill flex items-center justify-center text-sm font-sans font-medium text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+        >
+          {t("auth.continueAsGuest")}
+        </Link>
 
         <p className="text-center text-sm text-[var(--text-muted)] mt-6">
           {t("auth.alreadyParisien")}{" "}

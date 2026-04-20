@@ -89,8 +89,10 @@ export function MapBottomChrome({
   };
 
   return (
-    <div className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none"
-      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+    <div
+      className="fixed left-0 right-0 z-40 pointer-events-none"
+      style={{ bottom: "calc(72px + env(safe-area-inset-bottom, 0px))" }}
+    >
       <div className="pointer-events-auto px-3 pb-2 space-y-2">
         <AnimatePresence>
           {chipsVisible && (
