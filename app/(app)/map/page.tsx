@@ -19,6 +19,7 @@ import { useDebouncedCoords } from "@/hooks/useDebouncedCoords";
 import { usePlaces } from "@/hooks/usePlaces";
 import { useSavedEventIds } from "@/hooks/useSavedEvents";
 import { useSavedPlaceIds, useSavedPlaceRows } from "@/hooks/useSavedPlaces";
+import { USER_LOCATION_ZOOM } from "@/lib/constants";
 import { useAiRecommend } from "@/hooks/useAiRecommend";
 import type { RecommendItem } from "@/lib/ai/recommendTypes";
 import { X } from "lucide-react";
@@ -575,7 +576,7 @@ export default function MapPage() {
 
   const handleRecenter = useCallback(() => {
     if (lat != null && lng != null) {
-      mapRef.current?.flyTo({ center: [lng, lat], zoom: 15, duration: 800 });
+      mapRef.current?.flyTo({ center: [lng, lat], zoom: USER_LOCATION_ZOOM, duration: 800 });
     }
   }, [lat, lng]);
 

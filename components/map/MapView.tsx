@@ -8,12 +8,10 @@ import type { Event, GeminiMapLandmark, NearbyMapItem, Place, ParisCategory } fr
 import { EventPin } from "./EventPin";
 import { PlaceMapLabel } from "./PlaceMapLabel";
 import { clusterPlaces, clusterCellForZoom, CLUSTER_ZOOM_THRESHOLD } from "@/utils/mapHelpers";
+import { USER_LOCATION_ZOOM } from "@/lib/constants";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
-
-/** Zoom when centered on the user after GPS — street / few-block context */
-const USER_LOCATION_ZOOM = 15;
 
 interface MapViewProps {
   events: Event[];

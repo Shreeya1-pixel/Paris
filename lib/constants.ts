@@ -4,6 +4,8 @@ import { PARIS_CENTER } from "./geo";
 export { PARIS_CENTER };
 export const DEFAULT_MAP_CENTER = PARIS_CENTER;
 export const DEFAULT_ZOOM = 13;
+/** After GPS fix: building footprints & side streets visible (dense street-level UX) */
+export const USER_LOCATION_ZOOM = 17;
 export const DEFAULT_RADIUS_KM = 5;
 export const PARIS_RADIUS_KM = 30; // max radius from Paris center
 export const EVENTS_PAGE_LIMIT = 50;
