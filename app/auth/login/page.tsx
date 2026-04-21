@@ -141,7 +141,7 @@ export default function LoginPage() {
             <span className="font-normal">world</span>
           </h1>
           <p className="font-display text-lg text-[var(--text-secondary)] mt-0.5 tracking-wide">
-            Paris
+            {t("discover.subtitle")}
           </p>
         </div>
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import { bboxDeltas, haversineKm } from "@/lib/geo";
 import { sortFeedPriority } from "@/lib/api/eventSort";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
 import type { Event, Place } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
   const nowIso = new Date().toISOString();
   const { dLat, dLng } = bboxDeltas(lat, RADIUS_KM * 1.2);
 
-  const [evRes, cafeRes, gemRes] = await Promise.all([
+  const [evRes, mergedNearby] = await Promise.all([
     supabase
       .from("events")
       .select("*")
@@ -65,34 +66,15 @@ export async function GET(req: NextRequest) {
       .lte("lng", lng + dLng)
       .order("start_time", { ascending: true })
       .limit(MAX_EVENTS),
-    supabase
-      .from("paris_places")
-      .select("*")
-      .in("category", ["cafe", "boulangerie", "restaurant"])
-      .gte("lat", lat - dLat)
-      .lte("lat", lat + dLat)
-      .gte("lng", lng - dLng)
-      .lte("lng", lng + dLng)
-      .limit(MAX_PLACES),
-    supabase
-      .from("paris_places")
-      .select("*")
-      .eq("is_featured", true)
-      .gte("lat", lat - dLat)
-      .lte("lat", lat + dLat)
-      .gte("lng", lng - dLng)
-      .lte("lng", lng + dLng)
-      .limit(24),
+    fetchMergedNearbyForLocation(lat, lng, {
+      radiusFsqM: 8000,
+      radiusGeoM: 8000,
+      resultLimit: MAX_PLACES,
+    }),
   ]);
 
   if (evRes.error) {
     return NextResponse.json({ error: evRes.error.message }, { status: 500 });
-  }
-  if (cafeRes.error) {
-    return NextResponse.json({ error: cafeRes.error.message }, { status: 500 });
-  }
-  if (gemRes.error) {
-    return NextResponse.json({ error: gemRes.error.message }, { status: 500 });
   }
 
   let rawEvents = (evRes.data ?? []) as Event[];
@@ -143,32 +125,27 @@ export async function GET(req: NextRequest) {
 
   const forYou = sortFeedPriority(eventsInRadius, lat, lng).slice(0, 20);
 
-  const cafeRows = (cafeRes.data ?? []) as Place[];
-  const cafesSorted = cafeRows
-    .map((p) => ({ p, d: haversineKm(lat, lng, p.lat, p.lng) }))
-    .filter((x) => x.d <= RADIUS_KM)
-    .sort((a, b) => a.d - b.d)
-    .map(({ p, d }) => ({ ...p, distance_km: d }))
+  const isCafeRow = (p: Place) => {
+    const c = p.category.toLowerCase();
+    return c === "cafe" || c === "boulangerie" || c === "restaurant";
+  };
+  const isGemRow = (p: Place) => {
+    const c = p.category.toLowerCase();
+    return ["gallery", "park", "market", "bookshop", "club"].includes(c) || p.is_featured;
+  };
+
+  const cafesSorted = mergedNearby
+    .filter(isCafeRow)
+    .map((p) => ({ ...p, distance_km: haversineKm(lat, lng, p.lat, p.lng) }))
+    .filter((p) => p.distance_km <= RADIUS_KM)
+    .sort((a, b) => a.distance_km - b.distance_km)
     .slice(0, 12);
 
-  let gemRows = (gemRes.data ?? []) as Place[];
-  if (gemRows.length === 0) {
-    const { data: fallback } = await supabase
-      .from("paris_places")
-      .select("*")
-      .gte("lat", lat - dLat)
-      .lte("lat", lat + dLat)
-      .gte("lng", lng - dLng)
-      .lte("lng", lng + dLng)
-      .limit(40);
-    gemRows = (fallback ?? []) as Place[];
-  }
-
-  const hiddenGems = gemRows
-    .map((p) => ({ p, d: haversineKm(lat, lng, p.lat, p.lng) }))
-    .filter((x) => x.d <= RADIUS_KM)
-    .sort((a, b) => a.d - b.d)
-    .map(({ p, d }) => ({ ...p, distance_km: d }))
+  const gemPool = mergedNearby.filter((p) => isGemRow(p) && !isCafeRow(p));
+  const hiddenGems = (gemPool.length > 0 ? gemPool : mergedNearby)
+    .map((p) => ({ ...p, distance_km: haversineKm(lat, lng, p.lat, p.lng) }))
+    .filter((p) => p.distance_km <= RADIUS_KM)
+    .sort((a, b) => a.distance_km - b.distance_km)
     .slice(0, 9);
 
   const nearestEvents = [...eventsInRadius].sort(

@@ -77,9 +77,8 @@ export function AiRecommendPanel({
           transition={{ type: "spring", stiffness: 300, damping: 32 }}
           className="fixed left-0 right-0 z-[35] rounded-t-[22px] bg-white shadow-2xl"
           style={{
-            /* sits above the search bar (64px) + safe area; when filter chips are also
-               visible the chrome is ~120px — the panel's rounded top clears it cleanly */
-            bottom: "calc(152px + env(safe-area-inset-bottom, 0px))",
+            /* Above bottom nav (~72px) + MapBottomChrome (input + tall chip row + gap) */
+            bottom: "calc(212px + env(safe-area-inset-bottom, 0px))",
             maxHeight: "58dvh",
           }}
         >

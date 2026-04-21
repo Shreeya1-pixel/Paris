@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import { haversineKm } from "@/lib/geo";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
 import { mapEventCategoriesToPlaceCategories } from "@/lib/search/eventToPlaceCategories";
 import type { Event, Place } from "@/types";
 
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
   const placeCategories =
     categories.length > 0 ? mapEventCategoriesToPlaceCategories(categories) : undefined;
 
-  /** e.g. only "pop-up" — no valid `paris_places` category; avoid returning unfiltered places */
+  /** e.g. only "pop-up" — no mapped PlaceCategory; avoid returning unfiltered API places */
   const skipPlacesEntirely =
     categories.length > 0 && placeCategories === null && !q && !arrondissement;
 
@@ -106,23 +107,23 @@ export async function GET(req: NextRequest) {
   const evRes = await evQuery.limit(200);
 
   let places: Place[] = [];
-  if (shouldQueryPlaces) {
-    let plQuery = supabase.from("paris_places").select("*");
+  if (shouldQueryPlaces && hasUser) {
+    const merged = await fetchMergedNearbyForLocation(lat, lng, { resultLimit: 100 });
+    let filtered = merged;
     if (q) {
-      const pattern = `%${q}%`;
-      plQuery = plQuery.or(`name.ilike.${pattern},description.ilike.${pattern},address.ilike.${pattern}`);
+      filtered = merged.filter((p) => {
+        const hay = `${p.name} ${p.description ?? ""} ${p.address}`.toLowerCase();
+        return hay.includes(qLower);
+      });
     }
-    if (placeCategories && placeCategories.length === 1) {
-      plQuery = plQuery.eq("category", placeCategories[0]);
-    } else if (placeCategories && placeCategories.length > 1) {
-      plQuery = plQuery.in("category", placeCategories);
+    if (placeCategories && placeCategories.length >= 1) {
+      filtered = filtered.filter((p) => placeCategories!.includes(p.category));
     }
-    if (arrondissement) plQuery = plQuery.eq("arrondissement", arrondissement);
-    const plRes = await plQuery.limit(200);
-    if (plRes.error) {
-      return NextResponse.json({ error: plRes.error.message, events: [], places: [] }, { status: 500 });
+    if (arrondissement) {
+      const a = arrondissement.toLowerCase();
+      filtered = filtered.filter((p) => (p.arrondissement ?? "").toLowerCase().includes(a));
     }
-    places = (plRes.data ?? []) as Place[];
+    places = filtered;
   }
 
   if (evRes.error) {

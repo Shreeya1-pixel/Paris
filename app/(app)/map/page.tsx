@@ -84,12 +84,13 @@ export default function MapPage() {
   // ── Foursquare live places (with 500 m threshold + debounce) ─────────────
   const { places: foursquarePlaces } = usePlaces(lat, lng, 2000);
 
-  // Top nearby places to show as map popups
+  // Top nearby places to show as map popups (keep these close to user)
   const foursquarePopups = useMemo(() => {
     if (!lat || !lng || foursquarePlaces.length === 0) return [];
     return [...foursquarePlaces]
+      .filter((p) => (p.distance_km ?? 99) <= 1.6)
       .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99))
-      .slice(0, 10);
+      .slice(0, 8);
   }, [foursquarePlaces, lat, lng]);
 
   // ── Unified nearby feed (events + places) ────────────────────────────────
@@ -642,7 +643,10 @@ export default function MapPage() {
       {highlightedPlaces.length > 0 && !showRecommend && (
         <div
           className="absolute left-3 right-3 z-30 pointer-events-auto"
-          style={{ bottom: "calc(124px + env(safe-area-inset-bottom, 0px))" }}
+          style={{
+            /* Clear bottom nav (~72px) + search row + gap + chip row (MapBottomChrome is ~140–180px tall) */
+            bottom: "calc(212px + env(safe-area-inset-bottom, 0px))",
+          }}
         >
           <div className="relative rounded-2xl bg-white/92 border border-zinc-200 shadow-lg backdrop-blur-sm px-2.5 py-2 pt-10 space-y-2">
             <button

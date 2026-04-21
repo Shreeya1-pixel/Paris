@@ -208,8 +208,19 @@ export function MapView({
     if (geminiLandmarks.length === 0) setLandmarkPopupIds([]);
   }, [geminiLandmarks.length]);
   useEffect(() => {
-    if (foursquarePopups.length === 0) setFsqPopupIds([]);
-  }, [foursquarePopups.length]);
+    if (foursquarePopups.length === 0) {
+      setFsqPopupIds([]);
+      return;
+    }
+    // Keep popup ids in sync with the latest nearby places list.
+    // If previous ids are stale (e.g., user moved), reseed with nearest places.
+    const available = new Set(foursquarePopups.map((p) => p.id));
+    const nearestPopupIds = foursquarePopups.slice(0, 3).map((p) => p.id);
+    setFsqPopupIds((prev) => {
+      const stillValid = prev.filter((id) => available.has(id));
+      return stillValid.length > 0 ? stillValid : nearestPopupIds;
+    });
+  }, [foursquarePopups]);
 
   useEffect(() => {
     if (!spotlightPlaceIds.length) {

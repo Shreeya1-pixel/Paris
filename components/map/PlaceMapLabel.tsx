@@ -29,6 +29,39 @@ const DOT_COLOR: Record<PlaceCategory, string> = {
   bookshop: "#0d9488",
 };
 
+function resolvePlaceEmoji(place: Place): string {
+  const category = String(place.category ?? "").toLowerCase();
+  const context = [
+    place.name,
+    place.description ?? "",
+    place.address ?? "",
+    ...(place.tags ?? []),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  // Keyword-first overrides to avoid wrong icon when upstream category is noisy.
+  if (
+    context.includes("temple") ||
+    context.includes("mandir") ||
+    context.includes("mosque") ||
+    context.includes("church") ||
+    context.includes("gurudwara")
+  ) {
+    return "🛕";
+  }
+  if (
+    context.includes("shopping") ||
+    context.includes("mall") ||
+    context.includes("bazaar") ||
+    context.includes("marketplace")
+  ) {
+    return "🛍️";
+  }
+
+  return CAT_EMOJI[category as PlaceCategory] ?? "📍";
+}
+
 interface PlaceMapLabelProps {
   place: Place;
   expanded: boolean;
@@ -44,7 +77,7 @@ export function PlaceMapLabel({
 }: PlaceMapLabelProps) {
   const [hovered, setHovered] = useState(false);
   const dotColor = DOT_COLOR[place.category] ?? "#c9a84c";
-  const emoji = CAT_EMOJI[place.category] ?? "📍";
+  const emoji = resolvePlaceEmoji(place);
   const dotPx = selected ? 12 : 9;
   const isActive = selected || pulsing || hovered;
 

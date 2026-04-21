@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Cache lookup ──────────────────────────────────────────────────────────
-  const cacheK = geoKey(lat, lng, radius, "fs");
+  const cacheK = geoKey(lat, lng, radius, "fs", "open");
   const cached = getCached<Place[]>(cacheK);
   if (cached) {
     return NextResponse.json({ places: cached, source: "foursquare", cached: true });
@@ -145,6 +145,7 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("radius", String(radius));
   url.searchParams.set("categories", FS_CATEGORY_IDS);
   url.searchParams.set("limit", String(limit));
+  url.searchParams.set("open_now", "true");
   url.searchParams.set("fields", "fsq_id,name,categories,geocodes,location,distance,rating,popularity");
 
   let fsPlaces: FsPlace[] = [];

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPublicSupabase } from "@/lib/supabase/public";
-import { bboxDeltas, haversineKm } from "@/lib/geo";
+import { haversineKm } from "@/lib/geo";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
 import type { Place, PlaceCategory } from "@/types";
 
 export const dynamic = "force-dynamic";
-
-const MAX_FETCH = 300;
 
 const ALLOWED_CATS: PlaceCategory[] = [
   "cafe",
@@ -21,14 +19,6 @@ const ALLOWED_CATS: PlaceCategory[] = [
 const ALLOWED = new Set<string>(ALLOWED_CATS);
 
 export async function GET(req: NextRequest) {
-  const supabase = getPublicSupabase();
-  if (!supabase) {
-    return NextResponse.json(
-      { error: "Supabase not configured", places: [] as Place[] },
-      { status: 503 }
-    );
-  }
-
   const sp = req.nextUrl.searchParams;
   const lat = Number(sp.get("lat"));
   const lng = Number(sp.get("lng"));
@@ -49,8 +39,6 @@ export async function GET(req: NextRequest) {
 
   const offset = Math.max(0, Number.parseInt(sp.get("offset") ?? "0", 10) || 0);
 
-  const { dLat, dLng } = bboxDeltas(lat, radiusKm * 1.2);
-
   const catRaw = sp.get("categories")?.trim();
   const categories = catRaw
     ? catRaw
@@ -59,35 +47,30 @@ export async function GET(req: NextRequest) {
         .filter((c) => ALLOWED.has(c))
     : null;
 
-  let q = supabase
-    .from("paris_places")
-    .select("*")
-    .gte("lat", lat - dLat)
-    .lte("lat", lat + dLat)
-    .gte("lng", lng - dLng)
-    .lte("lng", lng + dLng);
+  const radiusFsqM = Math.min(20000, Math.max(500, radiusKm * 1000 * 1.15));
+  const radiusGeoM = Math.min(20000, Math.max(500, radiusKm * 1000 * 1.25));
+
+  const merged = await fetchMergedNearbyForLocation(lat, lng, {
+    resultLimit: Math.min(120, offset + limit + 40),
+    radiusFsqM,
+    radiusGeoM,
+  });
+
+  let rows = merged
+    .map((p) => ({ p, d: p.distance_km ?? haversineKm(lat, lng, p.lat, p.lng) }))
+    .filter((x) => x.d <= radiusKm)
+    .sort((a, b) => a.d - b.d)
+    .map(({ p, d }) => ({ ...p, distance_km: d }));
 
   if (categories && categories.length > 0) {
-    q = q.in("category", categories);
+    rows = rows.filter((p) => categories.includes(p.category));
   }
 
-  const { data, error } = await q.limit(MAX_FETCH);
-
-  if (error) {
-    return NextResponse.json({ error: error.message, places: [] as Place[] }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as Place[];
-  const withDist = rows
-    .map((p) => ({ p, d: haversineKm(lat, lng, p.lat, p.lng) }))
-    .filter((x) => x.d <= radiusKm)
-    .sort((a, b) => a.d - b.d);
-
-  const page = withDist.slice(offset, offset + limit).map(({ p, d }) => ({ ...p, distance_km: d }));
+  const page = rows.slice(offset, offset + limit);
 
   return NextResponse.json({
     places: page,
-    total: withDist.length,
+    total: rows.length,
     offset,
     limit,
   });

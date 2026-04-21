@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { bboxDeltas, haversineKm } from "@/lib/geo";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
 import { checkRecommendLimit, consumeRecommendQuota } from "@/lib/ai/recommendRateLimit";
 import { isBudgetExhausted, recordCall, getCostSnapshot } from "@/lib/ai/costTracker";
 import {
@@ -81,13 +82,12 @@ async function fetchNearbyCandidates(
   radiusKm: number = NEARBY_RADIUS_KM
 ): Promise<{ events: Event[]; places: Place[] }> {
   const supabase = getPublicSupabase();
-  if (!supabase) return { events: [], places: [] };
-
-  const { dLat, dLng } = bboxDeltas(lat, radiusKm * 1.3);
   const nowIso = new Date().toISOString();
 
-  const [evRes, plRes] = await Promise.all([
-    supabase
+  let events: Event[] = [];
+  if (supabase) {
+    const { dLat, dLng } = bboxDeltas(lat, radiusKm * 1.3);
+    const evRes = await supabase
       .from("events")
       .select("id,title,category,vibe_tags,start_time,location_name,arrondissement,lat,lng,is_free,image_url,attendee_count")
       .eq("status", "active")
@@ -96,26 +96,22 @@ async function fetchNearbyCandidates(
       .lte("lat", lat + dLat)
       .gte("lng", lng - dLng)
       .lte("lng", lng + dLng)
-      .limit(40),
-    supabase
-      .from("paris_places")
-      .select("id,name,category,description,arrondissement,tags,lat,lng,image_url,is_featured")
-      .gte("lat", lat - dLat)
-      .lte("lat", lat + dLat)
-      .gte("lng", lng - dLng)
-      .lte("lng", lng + dLng)
-      .limit(40),
-  ]);
+      .limit(40);
+    events = ((evRes.data ?? []) as Event[])
+      .map((e) => ({ ...e, distance_km: haversineKm(lat, lng, e.lat, e.lng) }))
+      .filter((e) => e.distance_km <= radiusKm)
+      .sort((a, b) => a.distance_km - b.distance_km);
+  }
 
-  const events = ((evRes.data ?? []) as Event[])
-    .map((e) => ({ ...e, distance_km: haversineKm(lat, lng, e.lat, e.lng) }))
-    .filter((e) => e.distance_km <= radiusKm)
-    .sort((a, b) => a.distance_km - b.distance_km);
-
-  let places = ((plRes.data ?? []) as Place[])
-    .map((p) => ({ ...p, distance_km: haversineKm(lat, lng, p.lat, p.lng) }))
-    .filter((p) => p.distance_km <= radiusKm)
-    .sort((a, b) => a.distance_km - b.distance_km);
+  const radiusM = Math.min(15000, Math.max(800, radiusKm * 1000 * 1.3));
+  const merged = await fetchMergedNearbyForLocation(lat, lng, {
+    resultLimit: 50,
+    radiusFsqM: radiusM,
+    radiusGeoM: radiusM,
+  });
+  let places = merged
+    .filter((p) => (p.distance_km ?? 99) <= radiusKm)
+    .sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99));
 
   // Vibe-aware soft boost
   if (vibe) {

@@ -14,10 +14,10 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Openworld Paris — Discover the City Like a Local",
+  title: "Openworld — Live events & places near you",
   description:
-    "Real-time event and place discovery hyper-focused on Paris. Find apéros, jazz nights, marchés, hidden cafés and more — always live.",
-  keywords: ["Paris events", "Paris nightlife", "Paris café", "Paris marché", "what to do in Paris"],
+    "Map-based discovery for events and cafés around your real location—always live, wherever you are.",
+  keywords: ["events near me", "places near me", "local events", "map discovery", "Openworld"],
 };
 
 export default function RootLayout({

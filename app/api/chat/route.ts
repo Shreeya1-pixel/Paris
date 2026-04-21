@@ -6,14 +6,11 @@ export const maxDuration = 30;
  * Tiered response system:
  *
  *  Assistant mode — Gemini AI with user coordinates + live events context
- *    Used by the map chatbot. Gemini answers about the user's real location.
+ *    Map chatbot: Foursquare + Geoapify nearby places (no static city catalogue).
  *    5 turns per user per day.
  *
- *  Tier 1 — Local Knowledge Base ($0)
- *    Serves 55 curated Paris spots instantly via keyword matching.
- *
- *  Tier 2 — Gemini AI ($$)
- *    Complex/conversational queries.
+ *  Standard mode — Gemini (or other AI) picks place IDs from a nearby catalogue
+ *    built from Foursquare + Geoapify at the user's coordinates.
  *
  *  Rate limiter
  *    Hard limit: 30 total requests / IP / 15 min.
@@ -23,10 +20,15 @@ export const maxDuration = 30;
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, consumeQuota, rateLimitMessage } from "@/lib/rateLimiter";
 import { assistantQuotaStatus, consumeAssistantTurn } from "@/lib/assistantSessionQuota";
-import { routeQuery } from "@/lib/chatRouter";
-import { searchLocalKB, ALL_SPOTS } from "@/lib/localKnowledgeBase";
-import type { LocalSpot } from "@/lib/localKnowledgeBase";
 import { getGeminiApiKey } from "@/lib/geminiEnv";
+import { haversineKm } from "@/lib/geo";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
+import type { Place } from "@/types";
+
+/** Tight radius so "near me" means walking distance, not city-wide (meters). */
+const ASSISTANT_FSQ_RADIUS_M = 3500;
+/** Geoapify circle radius in meters (must match intent: local). */
+const ASSISTANT_GEO_RADIUS_M = 3500;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,57 +67,32 @@ function dedupePlaces(rows: AssistantPlaceRow[]): AssistantPlaceRow[] {
   return Array.from(byKey.values());
 }
 
-function rankAssistantPlacesForQuery(rows: AssistantPlaceRow[], query: string): AssistantPlaceRow[] {
-  const q = query.toLowerCase();
-  const has = (arr: string[]) => arr.some((x) => q.includes(x));
-
-  const intent =
-    has(["date", "romantic"]) ? "date" :
-    has(["night", "nightlife", "party", "club", "music", "bar"]) ? "nightlife" :
-    has(["chill", "relax", "calm", "work", "study"]) ? "chill" :
-    has(["eat", "food", "dinner", "lunch", "breakfast", "brunch"]) ? "food" :
-    has(["shop", "market", "unique", "fun", "explore", "bored"]) ? "explore" :
-    "general";
-
-  const score = (p: AssistantPlaceRow): number => {
-    const cat = p.category.toLowerCase();
-    const text = `${p.name} ${p.description ?? ""} ${(p.tags ?? []).join(" ")}`.toLowerCase();
-    let s = 0;
-    if (intent === "date") {
-      if (cat.includes("restaurant") || cat.includes("bar") || cat.includes("cafe")) s += 4;
-      if (cat.includes("park") || cat.includes("gallery")) s += 2;
-      if (text.includes("romantic")) s += 2;
-    } else if (intent === "nightlife") {
-      if (cat.includes("bar") || cat.includes("club")) s += 5;
-      if (text.includes("live") || text.includes("music")) s += 2;
-    } else if (intent === "chill") {
-      if (cat.includes("cafe") || cat.includes("park") || cat.includes("library") || cat.includes("book")) s += 5;
-    } else if (intent === "food") {
-      if (cat.includes("restaurant") || cat.includes("cafe") || cat.includes("boulangerie") || cat.includes("market")) s += 5;
-    } else if (intent === "explore") {
-      if (cat.includes("market") || cat.includes("gallery") || cat.includes("park") || cat.includes("book")) s += 4;
-      if (text.includes("unique") || text.includes("hidden")) s += 2;
-    } else {
-      s += 1;
-    }
-    return s;
-  };
-
+/**
+ * Closest venues first, then intent relevance. Fixes wrong tie-break (lat²+lng² is not distance to user).
+ */
+function rankAssistantPlacesByDistanceAndIntent(
+  rows: AssistantPlaceRow[],
+  userLat: number,
+  userLng: number,
+  intent: AssistantIntent
+): AssistantPlaceRow[] {
   return [...rows].sort((a, b) => {
-    const sa = score(a);
-    const sb = score(b);
-    if (sa !== sb) return sb - sa;
-    const da = a.lat * a.lat + a.lng * a.lng;
-    const db = b.lat * b.lat + b.lng * b.lng;
-    return da - db;
+    const dA = haversineKm(userLat, userLng, a.lat, a.lng);
+    const dB = haversineKm(userLat, userLng, b.lat, b.lng);
+    if (Math.abs(dA - dB) > 0.03) return dA - dB;
+    const iA = intentMatchScore(a, intent);
+    const iB = intentMatchScore(b, intent);
+    if (iA !== iB) return iB - iA;
+    return dA - dB;
   });
 }
 
-type AssistantIntent = "date" | "nightlife" | "chill" | "food" | "explore" | "general";
+type AssistantIntent = "date" | "nightlife" | "chill" | "food" | "explore" | "general" | "grocery";
 
 function detectAssistantIntent(query: string): AssistantIntent {
   const q = query.toLowerCase();
   const has = (arr: string[]) => arr.some((x) => q.includes(x));
+  if (has(["grocery", "groceries", "supermarket", "hypermarket", "convenience store", "bodega", "7-eleven", "carrefour", "dmart", "big basket", "food mart"])) return "grocery";
   if (has(["date", "romantic"])) return "date";
   if (has(["night", "nightlife", "party", "club", "music", "bar"])) return "nightlife";
   if (has(["chill", "relax", "calm", "work", "study", "cafe", "café", "coffee", "tea"])) return "chill";
@@ -127,6 +104,19 @@ function detectAssistantIntent(query: string): AssistantIntent {
 function intentMatchScore(place: AssistantPlaceRow, intent: AssistantIntent): number {
   const cat = place.category.toLowerCase();
   const text = `${place.name} ${place.description ?? ""} ${(place.tags ?? []).join(" ")}`.toLowerCase();
+  if (intent === "grocery") {
+    if (
+      cat.includes("grocery") ||
+      cat.includes("supermarket") ||
+      cat.includes("market") ||
+      cat.includes("convenience") ||
+      cat.includes("organic") ||
+      text.includes("grocery") ||
+      text.includes("supermarket") ||
+      text.includes("hypermarket")
+    ) return 3;
+    return 0;
+  }
   if (intent === "date") {
     if (cat.includes("restaurant") || cat.includes("bar") || cat.includes("cafe")) return 3;
     if (cat.includes("park") || cat.includes("gallery")) return 2;
@@ -154,29 +144,8 @@ function intentMatchScore(place: AssistantPlaceRow, intent: AssistantIntent): nu
   return 1;
 }
 
-async function fetchAssistantPlacesSupabase(lat: number, lng: number): Promise<AssistantPlaceRow[]> {
-  const ASSISTANT_RADIUS_DEG = 0.35; // ~39km
-  const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supaKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supaUrl || !supaKey) return [];
-  try {
-    const { createClient } = await import("@supabase/supabase-js");
-    const sb = createClient(supaUrl, supaKey);
-    const plRes = await sb
-      .from("paris_places")
-      .select("id,name,category,description,arrondissement,address,tags,lat,lng,image_url,price_range,website_url,opening_hours,is_featured,created_at")
-      .gte("lat", lat - ASSISTANT_RADIUS_DEG)
-      .lte("lat", lat + ASSISTANT_RADIUS_DEG)
-      .gte("lng", lng - ASSISTANT_RADIUS_DEG)
-      .lte("lng", lng + ASSISTANT_RADIUS_DEG)
-      .limit(50);
-    return (plRes.data ?? []) as AssistantPlaceRow[];
-  } catch {
-    return [];
-  }
-}
-
 const FSQ_INTENT_CATS: Record<AssistantIntent, string[]> = {
+  grocery:   ["17069", "17088", "17050", "17045"], // grocery store, organic, farmer's market, food market
   chill:     ["13030","13032","13033","16032","16000","12002"],          // cafes, parks, museums
   food:      ["13065","13029","13030","13032","13033","17045"],          // restaurants, cafes, markets
   nightlife: ["13003","13058","13059","10024","10032"],                  // bars, clubs, lounges
@@ -191,9 +160,10 @@ async function fetchAssistantPlacesFoursquare(lat: number, lng: number, intent: 
   try {
     const url = new URL("https://api.foursquare.com/v3/places/search");
     url.searchParams.set("ll", `${lat},${lng}`);
-    url.searchParams.set("radius", "12000");
-    url.searchParams.set("limit", "30");
+    url.searchParams.set("radius", String(ASSISTANT_FSQ_RADIUS_M));
+    url.searchParams.set("limit", "40");
     url.searchParams.set("categories", FSQ_INTENT_CATS[intent].join(","));
+    url.searchParams.set("open_now", "true");
     url.searchParams.set("fields", "fsq_id,name,categories,geocodes,location");
     const res = await fetch(url.toString(), {
       headers: { Authorization: key, Accept: "application/json" },
@@ -243,6 +213,12 @@ async function fetchAssistantPlacesFoursquare(lat: number, lng: number, intent: 
 }
 
 const GEOAPIFY_INTENT_CATS: Record<AssistantIntent, string[]> = {
+  grocery: [
+    "commercial.supermarket",
+    "commercial.convenience",
+    "commercial.marketplace",
+    "commercial.greengrocer",
+  ],
   date: ["catering.restaurant", "catering.bar", "catering.cafe", "leisure.park"],
   nightlife: ["catering.bar", "catering.pub", "entertainment", "catering.restaurant"],
   chill: ["catering.cafe", "leisure.park", "education.library", "commercial.books"],
@@ -257,9 +233,10 @@ async function fetchAssistantPlacesGeoapify(lat: number, lng: number, intent: As
   try {
     const url = new URL("https://api.geoapify.com/v2/places");
     url.searchParams.set("categories", GEOAPIFY_INTENT_CATS[intent].join(","));
-    url.searchParams.set("filter", `circle:${lng},${lat},12000`);
+    url.searchParams.set("filter", `circle:${lng},${lat},${ASSISTANT_GEO_RADIUS_M}`);
     url.searchParams.set("bias", `proximity:${lng},${lat}`);
-    url.searchParams.set("limit", "30");
+    url.searchParams.set("limit", "40");
+    url.searchParams.set("conditions", "open_now");
     url.searchParams.set("apiKey", key);
     const res = await fetch(url.toString(), {
       headers: { Accept: "application/json" },
@@ -407,6 +384,29 @@ async function callAI(system: string, user: string): Promise<string> {
   throw new Error("NO_AI_KEY");
 }
 
+/** Response row shape for non-assistant chat (matches map place card fields). */
+function placeToChatPayload(p: Place): Record<string, unknown> {
+  return {
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    description: p.description,
+    address: p.address,
+    arrondissement: p.arrondissement,
+    lat: p.lat,
+    lng: p.lng,
+    image_url: p.image_url,
+    tags: p.tags ?? [],
+    opening_hours: p.opening_hours ?? null,
+    price_range: p.price_range,
+    website_url: p.website_url,
+    instagram_url: p.instagram_url ?? null,
+    is_featured: p.is_featured,
+    created_at: p.created_at,
+    is_saved: false,
+  };
+}
+
 // ─── System prompts ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
@@ -435,6 +435,8 @@ You operate in TWO modes depending on whether a places catalogue is provided:
 MODE A (catalogue provided):
 Return JSON: { "message": "...", "placeIds": ["id1","id2","id3"] }
 - Only use IDs from the catalogue. Pick 3-6 best matches.
+- Each catalogue entry includes distance_km from the user. The list is sorted CLOSEST FIRST.
+- You MUST prefer the smallest distance_km values — "near me" means truly nearby, not across town.
 
 MODE B (catalogue is empty or has <3 relevant matches):
 Use YOUR OWN knowledge to suggest 3-5 REAL, SPECIFIC places that exist at the user's location.
@@ -449,9 +451,9 @@ Return JSON:
 - Categories: cafe, restaurant, bar, park, museum, market, gallery, club, bookshop, landmark, temple, monument.
 
 CRITICAL RULES:
-- Give DIFFERENT suggestions every time. Never repeat previous answers.
+- Give DIFFERENT suggestions each request (vary wording), but NEVER pick a farther place when a closer one in the catalogue fits the same intent.
 - Be specific to the user's exact neighbourhood, not just the city.
-- Match the user's intent precisely (cafe = only cafes, nightlife = only bars/clubs).
+- Match the user's intent precisely (cafe = only cafes, grocery = supermarkets/grocers, nightlife = only bars/clubs).
 `.trim();
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -473,6 +475,15 @@ export async function POST(req: NextRequest) {
   if (!query?.trim()) {
     return NextResponse.json({ error: "No query provided" }, { status: 400 });
   }
+
+  const hasValidCoords =
+    typeof lat === "number" &&
+    typeof lng === "number" &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180 &&
+    !(lat === 0 && lng === 0);
 
   if (isOffTopic(query)) {
     return NextResponse.json({
@@ -544,14 +555,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const hasValidCoords =
-      typeof lat === "number" &&
-      typeof lng === "number" &&
-      Number.isFinite(lat) &&
-      Number.isFinite(lng) &&
-      Math.abs(lat) <= 90 &&
-      Math.abs(lng) <= 180 &&
-      !(lat === 0 && lng === 0);
     if (!hasValidCoords) {
       consumeQuota(ip, false);
       return NextResponse.json({
@@ -564,30 +567,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── Fetch nearby places from multiple providers for robust local suggestions ──
+    // ── Fetch nearby places from Foursquare + Geoapify (intent-scoped categories) ──
     const intent = detectAssistantIntent(query);
-    const [supabasePlaces, foursquarePlaces, geoapifyPlaces] = await Promise.all([
-      fetchAssistantPlacesSupabase(lat, lng),
+    const [foursquarePlaces, geoapifyPlaces] = await Promise.all([
       fetchAssistantPlacesFoursquare(lat, lng, intent),
       fetchAssistantPlacesGeoapify(lat, lng, intent),
     ]);
-    const nearbyPlaceRows = rankAssistantPlacesForQuery(
-      dedupePlaces([...supabasePlaces, ...foursquarePlaces, ...geoapifyPlaces]),
-      query
-    ).slice(0, 60);
-    const intentRows = nearbyPlaceRows
-      .filter((p) => intentMatchScore(p, intent) > 0)
-      .sort((a, b) => intentMatchScore(b, intent) - intentMatchScore(a, intent));
-    const promptRows = (intentRows.length >= 6 ? intentRows : nearbyPlaceRows).slice(0, 40);
-
-    // Shuffle the catalogue order sent to Gemini so it doesn't always pick the first N
-    for (let i = promptRows.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [promptRows[i], promptRows[j]] = [promptRows[j], promptRows[i]];
-    }
+    const merged = dedupePlaces([...foursquarePlaces, ...geoapifyPlaces]);
+    const ranked = rankAssistantPlacesByDistanceAndIntent(merged, lat, lng, intent).slice(0, 60);
+    const intentRows = ranked.filter((p) => intentMatchScore(p, intent) > 0);
+    const promptRows = (intentRows.length >= 3 ? intentRows : ranked).slice(0, 40);
 
     const nearbyPlacesCtx = promptRows.map((p) => ({
-      id: p.id, name: p.name, category: p.category,
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      distance_km: Math.round(haversineKm(lat, lng, p.lat, p.lng) * 100) / 100,
       arrondissement: p.arrondissement,
       description: (p.description ?? "").slice(0, 60),
     }));
@@ -595,8 +590,7 @@ export async function POST(req: NextRequest) {
 
     // Build the context: coordinates + events + nearby places catalogue
     const discoverEvents = discoverContext?.events ?? [];
-    // Only use catalogue if we have enough intent-matching entries
-    const hasCatalogue = intentRows.length >= 3;
+    const hasCatalogue = ranked.length >= 3;
     const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const userMessage = [
       `User question: "${query}"`,
@@ -624,6 +618,7 @@ export async function POST(req: NextRequest) {
       `RULES:`,
       `- Determine the user's city/neighbourhood from coordinates. Do NOT default to Paris.`,
       `- Match the intent "${intent}" precisely. Only suggest places that fit.`,
+      `- Prefer the LOWEST distance_km in the catalogue when several places match — the user asked for nearby.`,
       `- Give DIFFERENT answers each time (this is request ${nonce}).`,
       `- Be specific: use real place names, not generic descriptions.`,
     ].join("\n");
@@ -676,19 +671,15 @@ export async function POST(req: NextRequest) {
     // ── Hydrate results ─────────────────────────────────────────────────────
     let hydratedPlaces: Record<string, unknown>[] = [];
 
-    if (pickedPlaceIds.length > 0 && nearbyPlaceRows.length > 0) {
+    if (pickedPlaceIds.length > 0 && ranked.length > 0) {
       // Mode A: catalogue-based
-      const placeById = new Map(nearbyPlaceRows.map((p) => [p.id, p]));
-      // Backfill if Gemini picked too few
+      const placeById = new Map(ranked.map((p) => [p.id, p]));
+      // Backfill if Gemini picked too few — closest-first, no random shuffle
       if (pickedPlaceIds.length < 3) {
-        const fallbackBase = intentRows.length >= 3 ? intentRows : nearbyPlaceRows;
-        const candidates = rankAssistantPlacesForQuery(fallbackBase, query)
+        const fallbackBase = intentRows.length >= 3 ? intentRows : ranked;
+        const candidates = rankAssistantPlacesByDistanceAndIntent(fallbackBase, lat, lng, intent)
           .slice(0, 15)
           .map((p) => p.id);
-        for (let i = candidates.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-        }
         pickedPlaceIds = Array.from(new Set(pickedPlaceIds.concat(candidates))).slice(0, 6);
       }
       hydratedPlaces = pickedPlaceIds
@@ -706,8 +697,13 @@ export async function POST(req: NextRequest) {
           instagram_url: null, is_featured: p!.is_featured,
           created_at: p!.created_at, is_saved: false,
         }));
+      hydratedPlaces.sort(
+        (a, b) =>
+          haversineKm(lat, lng, (a as { lat: number }).lat, (a as { lng: number }).lng) -
+          haversineKm(lat, lng, (b as { lat: number }).lat, (b as { lng: number }).lng)
+      );
     } else if (geminiSuggestedPlaces.length > 0) {
-      // Mode B: Gemini's own knowledge
+      // Mode B: Gemini's own knowledge — still order by proximity to the user
       hydratedPlaces = geminiSuggestedPlaces
         .filter((p) => p.name && Number.isFinite(p.lat) && Number.isFinite(p.lng))
         .map((p, i) => ({
@@ -722,6 +718,11 @@ export async function POST(req: NextRequest) {
           instagram_url: null, is_featured: false,
           created_at: new Date().toISOString(), is_saved: false,
         }));
+      hydratedPlaces.sort(
+        (a, b) =>
+          haversineKm(lat, lng, (a as { lat: number }).lat, (a as { lng: number }).lng) -
+          haversineKm(lat, lng, (b as { lat: number }).lat, (b as { lng: number }).lng)
+      );
     }
 
     const remainingAssistant = assistantQuotaStatus(quotaKey).remaining;
@@ -734,72 +735,68 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── Tier 1: Local KB ─────────────────────────────────────────────────────
+  // ── Standard mode: AI picks IDs from merged nearby catalogue (Foursquare + Geoapify) ──
   const forceLocal = !rateLimit.aiAllowed;
-  const route = routeQuery(query, lang, false);
-
-  if (route.tier === "local") {
-    consumeQuota(ip, false);
-    return NextResponse.json({
-      events: [], places: route.spots.map(localSpotToPlace),
-      message: route.message, tier: "local",
-    });
-  }
 
   if (forceLocal) {
-    const { spots, message } = searchLocalKB(query, lang);
     consumeQuota(ip, false);
-    if (spots.length > 0) {
-      return NextResponse.json({ events: [], places: spots.map(localSpotToPlace), message, tier: "local" });
+    if (!hasValidCoords) {
+      return NextResponse.json({
+        events: [],
+        places: [],
+        message: rateLimitMessage(lang, rateLimit.retryAfterMs),
+        rateLimited: true,
+        tier: "local",
+      });
     }
+    const mergedLocal = await fetchMergedNearbyForLocation(lat, lng, { resultLimit: 35 });
     return NextResponse.json({
-      events: [], places: [],
+      events: [],
+      places: mergedLocal.slice(0, 15).map(placeToChatPayload),
       message: rateLimitMessage(lang, rateLimit.retryAfterMs),
-      rateLimited: true, tier: "local",
+      rateLimited: true,
+      tier: "local",
     });
   }
 
-  // ── Tier 2: Gemini AI ─────────────────────────────────────────────────────
+  if (!hasValidCoords) {
+    consumeQuota(ip, false);
+    return NextResponse.json({
+      events: [],
+      places: [],
+      message:
+        lang === "fr"
+          ? "Activez la localisation pour des suggestions près de vous."
+          : "Turn on location to get suggestions near you.",
+      tier: "ai",
+    });
+  }
 
-  let dbPlaces: Record<string, unknown>[] = [];
-  try {
-    const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const akey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (url && akey) {
-      const { createClient } = await import("@supabase/supabase-js");
-      const sb = createClient(url, akey);
-      const plRes = await sb
-        .from("paris_places")
-        .select("id, name, category, description, arrondissement, tags, price_range, lat, lng")
-        .limit(60);
-      dbPlaces = (plRes.data ?? []) as Record<string, unknown>[];
-    }
-  } catch { /* continue with KB only */ }
+  const apiCatalog = await fetchMergedNearbyForLocation(lat, lng, { resultLimit: 55 });
+  if (apiCatalog.length === 0) {
+    consumeQuota(ip, false);
+    return NextResponse.json({
+      events: [],
+      places: [],
+      message:
+        lang === "fr"
+          ? "Aucun lieu à proximité pour le moment."
+          : "No nearby places right now — try again in a few minutes.",
+      tier: "ai",
+    });
+  }
 
-  const kbContext = ALL_SPOTS.map((s) => ({
-    id: s.id,
-    name: s.name,
-    category: s.category,
-    arrondissement: s.arrondissement,
-    tags: s.tags.slice(0, 5),
-    description: s.description.slice(0, 80),
-  }));
-
-  const dbContext = dbPlaces.map((p) => ({
+  const allPlacesCtx = apiCatalog.map((p) => ({
     id: p.id,
     name: p.name,
     category: p.category,
+    distance_km: Math.round(haversineKm(lat, lng, p.lat, p.lng) * 100) / 100,
     arrondissement: p.arrondissement,
-    tags: p.tags,
-    description: ((p.description as string) ?? "").slice(0, 80),
+    description: (p.description ?? "").slice(0, 80),
   }));
 
-  const dbNames = new Set(dbContext.map((p) => String(p.name).toLowerCase()));
-  const mergedKB = kbContext.filter((k) => !dbNames.has(k.name.toLowerCase()));
-  const allPlacesCtx = [...dbContext, ...mergedKB];
-
   const userMessage = `User query: "${query}"
-User location: lat ${lat ?? "unknown"}, lng ${lng ?? "unknown"}
+User location: lat ${lat}, lng ${lng}
 Language: ${lang}
 
 Available places catalogue (${allPlacesCtx.length} spots):
@@ -821,12 +818,9 @@ Instructions:
   } catch (err: unknown) {
     const noKey = err instanceof Error && err.message === "NO_AI_KEY";
     consumeQuota(ip, false);
-    const { spots, message } = searchLocalKB(query, lang);
-    if (spots.length > 0) {
-      return NextResponse.json({ events: [], places: spots.map(localSpotToPlace), message, tier: "local" });
-    }
     return NextResponse.json({
-      events: [], places: [],
+      events: [],
+      places: [],
       message: noKey
         ? "Add GEMINI_API_KEY to .env.local to enable AI search."
         : "AI search is temporarily unavailable.",
@@ -841,62 +835,37 @@ Instructions:
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
       events: [],
-      places: spots.length > 0 ? spots.map(localSpotToPlace) : [],
-      message: spots.length > 0 ? message : "Here are some ideas!",
-      tier: "local",
+      places: [],
+      message: "Here are some ideas!",
+      tier: "ai",
     });
   }
 
   const pickedIds = parsed.placeIds ?? [];
+  const placeById = new Map(apiCatalog.map((p) => [p.id, p]));
 
   if (pickedIds.length === 0) {
-    const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
       events: [],
-      places: spots.map(localSpotToPlace),
-      message: spots.length > 0 ? message : (parsed.message ?? "Nothing found - try rephrasing!"),
-      tier: spots.length > 0 ? "local" : "ai",
+      places: [],
+      message: parsed.message ?? "Nothing found — try rephrasing!",
+      tier: "ai",
     });
   }
 
-  // ── Hydrate: UUID IDs -> Supabase, kb-paris-* IDs -> local KB ─────────────
-  const uuids = pickedIds.filter((id) => !id.startsWith("kb-"));
-  const kbIds  = pickedIds.filter((id) => id.startsWith("kb-"));
-
-  let supabasePlaces: unknown[] = [];
-  if (uuids.length > 0) {
-    try {
-      const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const akey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if (url && akey) {
-        const { createClient } = await import("@supabase/supabase-js");
-        const sb = createClient(url, akey);
-        const plRes = await sb.from("paris_places").select("*").in("id", uuids);
-        supabasePlaces = plRes.data ?? [];
-      }
-    } catch { /* ignore */ }
-  }
-
-  const kbPlaces = ALL_SPOTS.filter((s) => kbIds.includes(s.id)).map(localSpotToPlace);
-
-  const hydratedById = new Map<string, unknown>();
-  for (const p of supabasePlaces) hydratedById.set((p as { id: string }).id, p);
-  for (const p of kbPlaces)       hydratedById.set(p.id, p);
-
   const orderedPlaces = pickedIds
-    .map((id) => hydratedById.get(id))
-    .filter(Boolean);
+    .map((id) => placeById.get(id))
+    .filter(Boolean)
+    .map((p) => placeToChatPayload(p!));
 
   if (orderedPlaces.length === 0) {
-    const { spots, message } = searchLocalKB(query, lang);
     return NextResponse.json({
       events: [],
-      places: spots.map(localSpotToPlace),
-      message: spots.length > 0 ? message : (parsed.message ?? "Here's what I found!"),
-      tier: "local",
+      places: [],
+      message: parsed.message ?? "Here's what I found!",
+      tier: "ai",
     });
   }
 
@@ -906,27 +875,4 @@ Instructions:
     message: parsed.message ?? "Here's what I found!",
     tier: "ai",
   });
-}
-
-// ─── Shape adapters ───────────────────────────────────────────────────────────
-
-function localSpotToPlace(spot: LocalSpot) {
-  return {
-    id: spot.id,
-    name: spot.name,
-    category: spot.category,
-    description: spot.description,
-    address: spot.address,
-    arrondissement: spot.arrondissement,
-    lat: spot.lat,
-    lng: spot.lng,
-    image_url: null,
-    tags: spot.tags,
-    opening_hours: spot.opening_hours ?? {},
-    price_range: spot.price_range,
-    website_url: spot.website_url,
-    instagram_url: null,
-    is_featured: spot.is_featured,
-    created_at: spot.created_at,
-  };
 }

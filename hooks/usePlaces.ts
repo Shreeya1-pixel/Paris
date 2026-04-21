@@ -5,7 +5,7 @@
  *  - 500 ms debounce on lat/lng changes
  *  - 500 m movement threshold: skip re-fetch if user hasn't moved enough
  *  - React Query for client-side caching & deduplication
- *  - Graceful fallback to nearby DB / Gemini landmarks when third-party APIs are empty
+ *  - Fallback to merged nearby API route, then Gemini landmarks when third-party APIs are empty
  */
 
 import { useRef, useEffect, useState } from "react";

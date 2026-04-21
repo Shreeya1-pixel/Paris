@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ places: [] as Place[], source: "geoapify", configured: false });
   }
 
-  const cacheK = geoKey(lat, lng, radius, "ga");
+  const cacheK = geoKey(lat, lng, radius, "ga", "open");
   const cached = getCached<Place[]>(cacheK);
   if (cached) {
     return NextResponse.json({ places: cached, source: "geoapify", cached: true });
@@ -125,6 +125,7 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("filter", `circle:${lng},${lat},${radius}`);
   url.searchParams.set("bias", `proximity:${lng},${lat}`);
   url.searchParams.set("limit", String(limit));
+  url.searchParams.set("conditions", "open_now");
   url.searchParams.set("apiKey", apiKey);
 
   let features: GeoapifyResponse["features"] = [];

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import { bboxDeltas, haversineKm } from "@/lib/geo";
+import { fetchMergedNearbyForLocation } from "@/lib/places/fetchMergedNearbyForLocation";
 import type { Event, NearbyMapItem, Place } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
   const nowIso = new Date().toISOString();
   const { dLat, dLng } = bboxDeltas(lat, radiusKm * 1.2);
 
-  const [eventsRes, placesRes] = await Promise.all([
+  const [eventsRes, apiPlaces] = await Promise.all([
     supabase
       .from("events")
       .select("*")
@@ -60,14 +61,11 @@ export async function GET(req: NextRequest) {
       .lte("lng", lng + dLng)
       .order("start_time", { ascending: true })
       .limit(MAX_FETCH),
-    supabase
-      .from("paris_places")
-      .select("*")
-      .gte("lat", lat - dLat)
-      .lte("lat", lat + dLat)
-      .gte("lng", lng - dLng)
-      .lte("lng", lng + dLng)
-      .limit(MAX_FETCH),
+    fetchMergedNearbyForLocation(lat, lng, {
+      radiusFsqM: Math.min(3000, radiusKm * 1000),
+      radiusGeoM: Math.min(8000, radiusKm * 1000),
+      resultLimit: MAX_FETCH,
+    }),
   ]);
 
   if (eventsRes.error) {
@@ -76,18 +74,12 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-  if (placesRes.error) {
-    return NextResponse.json(
-      { error: placesRes.error.message, items: [] as NearbyMapItem[], events: [] as Event[], places: [] as Place[] },
-      { status: 500 }
-    );
-  }
 
   const eventsWithDist = ((eventsRes.data ?? []) as Event[])
     .map((event) => ({ ...event, distance_km: haversineKm(lat, lng, event.lat, event.lng) }))
     .filter((event) => (event.distance_km ?? 99) <= radiusKm);
 
-  const placesWithDist = ((placesRes.data ?? []) as Place[])
+  const placesWithDist = apiPlaces
     .map((place) => ({ ...place, distance_km: haversineKm(lat, lng, place.lat, place.lng) }))
     .filter((place) => (place.distance_km ?? 99) <= radiusKm);
 

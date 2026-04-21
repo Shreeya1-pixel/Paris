@@ -93,7 +93,7 @@ export function MapBottomChrome({
       className="fixed left-0 right-0 z-40 pointer-events-none"
       style={{ bottom: "calc(72px + env(safe-area-inset-bottom, 0px))" }}
     >
-      <div className="pointer-events-auto px-3 pb-2 space-y-2">
+      <div className="pointer-events-auto px-3 pb-2 flex flex-col gap-6">
         <AnimatePresence>
           {chipsVisible && (
             <motion.div
@@ -102,9 +102,9 @@ export function MapBottomChrome({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.22 }}
-              className="flex flex-col gap-2"
+              className="flex flex-col flex-shrink-0 gap-2 pb-0.5"
             >
-              <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5 -mx-1 px-1 items-center">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 items-end min-h-[44px]">
               {onPlaceFiltersChange &&
                 PLACE_FILTERS.map((f) => {
                   const on = placeFilters.includes(f.id);
@@ -192,7 +192,7 @@ export function MapBottomChrome({
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0 pt-1">
           <Link
             href="/events/create"
             className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center text-white shadow-lg active:scale-95 transition-transform"
