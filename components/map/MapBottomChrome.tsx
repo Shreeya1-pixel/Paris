@@ -114,10 +114,10 @@ export function MapBottomChrome({
                       type="button"
                       onClick={() => togglePlace(f.id)}
                       className={cn(
-                        "shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full text-[11px] font-sans font-semibold border transition-all",
+                        "shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full text-[11px] font-sans font-semibold border transition-all duration-150",
                         on
-                          ? "bg-amber-500/25 border-amber-400/60 text-zinc-900 shadow-sm"
-                          : "bg-white/75 border-zinc-200/80 text-zinc-600 backdrop-blur-md"
+                          ? "bg-white/92 border-zinc-900/75 text-zinc-900 shadow-[0_8px_22px_rgba(0,0,0,0.18)] ring-1 ring-zinc-900/25 backdrop-blur-xl"
+                          : "bg-white/80 border-zinc-200/80 text-zinc-700 shadow-sm backdrop-blur-md hover:bg-white/92 hover:text-zinc-900"
                       )}
                     >
                       <span>{f.emoji}</span>
