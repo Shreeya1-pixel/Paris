@@ -42,13 +42,25 @@ function resolvePlaceEmoji(place: Place): string {
 
   // Keyword-first overrides to avoid wrong icon when upstream category is noisy.
   if (
+    context.includes("mosque") ||
+    context.includes("masjid")
+  ) {
+    return "🕌";
+  }
+  if (
     context.includes("temple") ||
     context.includes("mandir") ||
-    context.includes("mosque") ||
-    context.includes("church") ||
     context.includes("gurudwara")
   ) {
     return "🛕";
+  }
+  if (
+    context.includes("church") ||
+    context.includes("chapel") ||
+    context.includes("cathedral") ||
+    context.includes("basilica")
+  ) {
+    return "⛪️";
   }
   if (
     context.includes("shopping") ||

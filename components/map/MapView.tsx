@@ -68,6 +68,28 @@ const LANDMARK_EMOJI: Record<string, string> = {
   park: "🌳",
 };
 
+function landmarkEmojiFor(item: GeminiMapLandmark): string {
+  const category = String(item.category).toLowerCase();
+  const context = `${item.name} ${item.description ?? ""}`.toLowerCase();
+  if (context.includes("mosque") || context.includes("masjid")) return "🕌";
+  if (
+    context.includes("temple") ||
+    context.includes("mandir") ||
+    context.includes("gurudwara")
+  ) {
+    return "🛕";
+  }
+  if (
+    context.includes("church") ||
+    context.includes("chapel") ||
+    context.includes("cathedral") ||
+    context.includes("basilica")
+  ) {
+    return "⛪️";
+  }
+  return LANDMARK_EMOJI[category] ?? "✨";
+}
+
 export function MapView({
   events,
   places = [],
@@ -369,7 +391,7 @@ export function MapView({
               }}
             >
               <span className="text-[22px] leading-none">
-                {LANDMARK_EMOJI[String(L.category).toLowerCase()] ?? "✨"}
+                {landmarkEmojiFor(L)}
               </span>
             </div>
             <div className="w-2.5 h-2.5 -mt-1 rounded-full bg-amber-500/90 border border-white shadow-sm" />
