@@ -235,12 +235,12 @@ export default function LoginPage() {
           {googleLoading ? "…" : t("auth.google")}
         </button>
 
-        <Link
+        <a
           href="/auth/guest"
           className="mt-3 w-full h-11 rounded-pill flex items-center justify-center text-sm font-sans font-medium text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
         >
           {t("auth.continueAsGuest")}
-        </Link>
+        </a>
 
         <p className="text-center text-sm text-[var(--text-muted)] mt-6">
           {t("auth.newUserPrompt")}{" "}
