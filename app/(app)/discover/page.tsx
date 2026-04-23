@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DiscoverFeed } from "@/components/discover/DiscoverFeed";
@@ -18,7 +18,7 @@ function hasSearchFilters(f: SearchFilters): boolean {
   );
 }
 
-export default function DiscoverPage() {
+function DiscoverPageContent() {
   const sp = useSearchParams();
   const { coords, lat: rawLat, lng: rawLng } = useUserLocation();
   const queryClient = useQueryClient();
@@ -250,5 +250,13 @@ export default function DiscoverPage() {
         />
       )}
     </>
+  );
+}
+
+export default function DiscoverPage() {
+  return (
+    <Suspense fallback={null}>
+      <DiscoverPageContent />
+    </Suspense>
   );
 }
