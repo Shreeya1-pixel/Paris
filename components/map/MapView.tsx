@@ -41,6 +41,15 @@ interface MapViewProps {
   geminiLandmarks?: GeminiMapLandmark[];
   /** Top nearby Foursquare places shown as auto-open popups */
   foursquarePopups?: Place[];
+  /** Global gate: popups stay hidden until user searches */
+  popupsEnabled?: boolean;
+  /** Auto-open nearby popups only after user-initiated search */
+  enableAutoFoursquarePopups?: boolean;
+  /**
+   * When true, hide Mapbox built-in POI / transit point symbols (still shows roads & place names).
+   * Use until the user has run a search so the map is not covered in default POI icons.
+   */
+  hideBasemapPoi?: boolean;
 }
 
 /** Emoji for a place category cluster bubble */
@@ -110,6 +119,9 @@ export function MapView({
   onSpotlightConsumed,
   geminiLandmarks = [],
   foursquarePopups = [],
+  popupsEnabled = false,
+  enableAutoFoursquarePopups = false,
+  hideBasemapPoi = false,
 }: MapViewProps) {
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownRef = useRef(false);
@@ -164,9 +176,23 @@ export function MapView({
         "veterinary",
       ];
       const layers = map.getStyle()?.layers ?? [];
+      const hiddenLabelLayerPatterns = [
+        "shield",
+        "motorway-junction",
+        "highway-shield",
+        "road-number",
+      ];
       for (const layer of layers) {
         if (layer.type !== "symbol") continue;
         if (layer.source !== "composite") continue;
+
+        // Hide highway/reference clutter (road shields and junction numbers).
+        const layerId = layer.id.toLowerCase();
+        if (hiddenLabelLayerPatterns.some((token) => layerId.includes(token))) {
+          map.setLayoutProperty(layer.id, "visibility", "none");
+          continue;
+        }
+
         const sourceLayer = (layer as { "source-layer"?: string })["source-layer"];
         if (sourceLayer !== "poi_label") continue;
         const existingFilter = (layer as { filter?: unknown }).filter;
@@ -226,10 +252,47 @@ export function MapView({
     });
   }, [flyToUserOnce, mapReady]);
 
+  // Hide default Mapbox POI clutter until the user has searched (separate from our React markers).
   useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !mapReady) return;
+    const visibility = hideBasemapPoi ? "none" : "visible";
+    const style = map.getStyle();
+    if (!style?.layers) return;
+    for (const layer of style.layers) {
+      if (layer.source !== "composite") continue;
+      if (layer.type !== "symbol" && layer.type !== "circle") continue;
+      const sl = (layer as { "source-layer"?: string })["source-layer"] ?? "";
+      const id = layer.id.toLowerCase();
+      const isPoiOrTransitSource =
+        sl === "poi_label" ||
+        sl === "airport_label" ||
+        sl === "transit_stop_label";
+      const isTransitPoiById =
+        (id.includes("transit") && (id.includes("label") || id.includes("icon"))) ||
+        id.includes("subway");
+      if (isPoiOrTransitSource || isTransitPoiById) {
+        try {
+          map.setLayoutProperty(layer.id, "visibility", visibility);
+        } catch {
+          // Layer may be unavailable in some style builds.
+        }
+      }
+    }
+  }, [hideBasemapPoi, mapReady]);
+
+  useEffect(() => {
+    if (!popupsEnabled) {
+      setLandmarkPopupIds([]);
+      return;
+    }
     if (geminiLandmarks.length === 0) setLandmarkPopupIds([]);
-  }, [geminiLandmarks.length]);
+  }, [geminiLandmarks.length, popupsEnabled]);
   useEffect(() => {
+    if (!popupsEnabled || !enableAutoFoursquarePopups) {
+      setFsqPopupIds([]);
+      return;
+    }
     if (foursquarePopups.length === 0) {
       setFsqPopupIds([]);
       return;
@@ -242,7 +305,7 @@ export function MapView({
       const stillValid = prev.filter((id) => available.has(id));
       return stillValid.length > 0 ? stillValid : nearestPopupIds;
     });
-  }, [foursquarePopups]);
+  }, [foursquarePopups, enableAutoFoursquarePopups, popupsEnabled]);
 
   useEffect(() => {
     if (!spotlightPlaceIds.length) {
@@ -378,9 +441,11 @@ export function MapView({
               lastMarkerClickMs.current = Date.now();
               onEventSelect(null);
               onPlaceSelect?.(null);
-              setLandmarkPopupIds((prev) =>
-                prev[0] === L.id ? [] : [L.id]
-              );
+              if (popupsEnabled) {
+                setLandmarkPopupIds((prev) =>
+                  prev[0] === L.id ? [] : [L.id]
+                );
+              }
               setFsqPopupIds([]);
             }}
           >
@@ -399,7 +464,7 @@ export function MapView({
         </Marker>
       ))}
 
-      {geminiLandmarks
+      {popupsEnabled && geminiLandmarks
         .filter((L) => landmarkPopupIds.includes(L.id))
         .map((L) => (
           <Popup
@@ -432,7 +497,7 @@ export function MapView({
         ))}
 
       {/* Foursquare nearby place popups */}
-      {foursquarePopups
+      {popupsEnabled && foursquarePopups
         .filter((p) => fsqPopupIds.includes(p.id))
         .map((p) => {
           const distLabel =
@@ -560,9 +625,11 @@ export function MapView({
               lastMarkerClickMs.current = Date.now();
               onEventSelect(null);
               onPlaceSelect?.(place);
-              setFsqPopupIds((prev) =>
-                prev[0] === place.id ? [] : [place.id]
-              );
+              if (popupsEnabled) {
+                setFsqPopupIds((prev) =>
+                  prev[0] === place.id ? [] : [place.id]
+                );
+              }
               setLandmarkPopupIds([]);
             }}
           >

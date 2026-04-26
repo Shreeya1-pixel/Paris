@@ -35,6 +35,8 @@ const MapView = dynamic(
 const NEARBY_STALE_MS = 3 * 60 * 1000;
 const NEARBY_RADIUS_KM = 6;
 
+const NO_EVENT_HIGHLIGHTS = new Set<string>();
+
 export default function MapPage() {
   const { lang } = useLanguage();
   const liveTrack = false;
@@ -72,6 +74,8 @@ export default function MapPage() {
   const [assistantRemaining, setAssistantRemaining] = useState<number | null>(null);
   const [manualSearchHint, setManualSearchHint] = useState(false);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [showNearby, setShowNearby] = useState(false);
 
   const mapRef = useRef<MapRef | null>(null);
   const hasFlownToUser = useRef(false);
@@ -265,8 +269,6 @@ export default function MapPage() {
       debounced.lng !== 0,
   });
 
-  const geminiLandmarks = landmarkRes?.landmarks ?? [];
-
   const discoverContextEvents = useMemo(() => {
     return (nearbyRes?.events ?? []).slice(0, 22).map((e) => ({
       id: e.id,
@@ -330,6 +332,29 @@ export default function MapPage() {
       .map((p) => p.id);
   }, [lat, lng, mapPlaces]);
 
+  const mapEventsForView = useMemo(() => (hasSearched ? allEvents : []), [hasSearched, allEvents]);
+  const mapPlacesForView = useMemo(() => (hasSearched ? mapPlaces : []), [hasSearched, mapPlaces]);
+  const mapGeminiForView = useMemo(
+    () => (hasSearched ? (landmarkRes?.landmarks ?? []) : []),
+    [hasSearched, landmarkRes?.landmarks]
+  );
+  const foursquareForView = useMemo(
+    () => (hasSearched || showNearby ? foursquarePopups : []),
+    [hasSearched, showNearby, foursquarePopups]
+  );
+  const spotlightIdsForView = useMemo(
+    () => (hasSearched ? spotlightPlaceIds : []),
+    [hasSearched, spotlightPlaceIds]
+  );
+  const persistentIdsForView = useMemo(
+    () => (hasSearched ? persistentLabelPlaceIds : []),
+    [hasSearched, persistentLabelPlaceIds]
+  );
+  const highlightedEventIdsForView = useMemo(
+    () => (hasSearched ? highlightedEventIds : NO_EVENT_HIGHLIGHTS),
+    [hasSearched, highlightedEventIds]
+  );
+
   useEffect(() => {
     if (locStatus !== "granted" || hasFlownToUser.current || lat == null || lng == null) return;
     hasFlownToUser.current = true;
@@ -337,13 +362,14 @@ export default function MapPage() {
   }, [locStatus, lat, lng]);
 
   useEffect(() => {
+    if (!hasSearched) return;
     if (locStatus !== "granted" || hasSpotlit.current || mapPlacesRaw.length === 0) return;
     hasSpotlit.current = true;
     const sorted = [...mapPlacesRaw].sort(
       (a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99)
     );
     setSpotlightPlaceIds(sorted.slice(0, 20).map((p) => p.id));
-  }, [locStatus, mapPlacesRaw]);
+  }, [hasSearched, locStatus, mapPlacesRaw]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -405,6 +431,7 @@ export default function MapPage() {
     async (rawQuery: string) => {
       const q = rawQuery.trim();
       if (!q || searchLoading || !assistantSessionId) return;
+      setHasSearched(true);
       const hasCoords = Number.isFinite(coords.lat) && Number.isFinite(coords.lng) && coords.lat !== 0 && coords.lng !== 0;
       if (!hasCoords) {
         setAiMessage("Enable location to get nearby suggestions.");
@@ -611,9 +638,9 @@ export default function MapPage() {
       {/* Map layer */}
       <div className="absolute inset-0 z-0">
         <MapView
-          events={allEvents}
-          places={mapPlaces}
-          highlightedEventIds={highlightedEventIds}
+          events={mapEventsForView}
+          places={mapPlacesForView}
+          highlightedEventIds={highlightedEventIdsForView}
           selectedEventId={selectedEvent?.id ?? null}
           selectedPlaceId={detailPlace?.id ?? null}
           onEventSelect={handleMapEventSelect}
@@ -626,17 +653,22 @@ export default function MapPage() {
           showUserMarker={showUserMarker}
           flyToUserOnce={flyToUserOnce}
           initialCenter={lat != null && lng != null ? { lat, lng } : undefined}
-          spotlightPlaceIds={spotlightPlaceIds}
-          persistentLabelPlaceIds={persistentLabelPlaceIds}
+          spotlightPlaceIds={spotlightIdsForView}
+          persistentLabelPlaceIds={persistentIdsForView}
           onSpotlightConsumed={() => setSpotlightPlaceIds([])}
-          geminiLandmarks={geminiLandmarks}
-          foursquarePopups={foursquarePopups}
+          geminiLandmarks={mapGeminiForView}
+          foursquarePopups={foursquareForView}
+          popupsEnabled={hasSearched || showNearby}
+          enableAutoFoursquarePopups={hasSearched || showNearby}
+          hideBasemapPoi={!hasSearched && !showNearby}
         />
       </div>
 
       <MapTopChrome
         cityLabel={locationLabel?.trim() || fallbackFromNearby || undefined}
         onRecenter={handleRecenter}
+        showNearby={showNearby}
+        onToggleNearby={() => setShowNearby((v) => !v)}
       />
 
       {/* Assistant suggested places — vertical popup above chat */}

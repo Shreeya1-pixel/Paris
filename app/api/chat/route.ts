@@ -29,6 +29,10 @@ import type { Place } from "@/types";
 const ASSISTANT_FSQ_RADIUS_M = 3500;
 /** Geoapify circle radius in meters (must match intent: local). */
 const ASSISTANT_GEO_RADIUS_M = 3500;
+/** Driving-time constraint for "near me" results (defaults: 30 min city driving). */
+const ASSISTANT_MAX_DRIVE_MINUTES = Number(process.env.ASSISTANT_MAX_DRIVE_MINUTES ?? "30");
+const ASSISTANT_CITY_DRIVE_KMPH = Number(process.env.ASSISTANT_CITY_DRIVE_KMPH ?? "28");
+const ASSISTANT_MIN_RESULTS_AFTER_DRIVE_CAP = 6;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +93,62 @@ function rankAssistantPlacesByDistanceAndIntent(
 
 type AssistantIntent = "date" | "nightlife" | "chill" | "food" | "explore" | "general" | "grocery";
 
+type QueryIntentSpec = {
+  mergeMode: "single" | "multi";
+  terms: string[];
+  explicitMerge: boolean;
+};
+
+const TERM_SYNONYMS: Record<string, string[]> = {
+  italian: ["italian"],
+  punjabi: ["punjabi"],
+  indian: ["indian"],
+  mexican: ["mexican"],
+  japanese: ["japanese"],
+  chinese: ["chinese"],
+  thai: ["thai"],
+  korean: ["korean"],
+  mediterranean: ["mediterranean", "greek", "lebanese", "turkish"],
+  burger: ["burger"],
+  margarita: ["margarita", "cocktail"],
+};
+
+function matchesPhrase(text: string, phrase: string): boolean {
+  if (!phrase) return false;
+  if (phrase.includes(" ")) return text.includes(phrase);
+  return new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text);
+}
+
+function parseQueryIntentSpec(query: string): QueryIntentSpec {
+  const q = query.toLowerCase().trim();
+  const explicitMerge = /(\+|,|\/|&|\band\b|\bor\b)/i.test(q);
+  const hits: Array<{ term: string; index: number }> = [];
+
+  for (const [term, aliases] of Object.entries(TERM_SYNONYMS)) {
+    const idx = aliases
+      .map((alias) => q.indexOf(alias))
+      .filter((n) => n >= 0)
+      .sort((a, b) => a - b)[0];
+    if (idx !== undefined) hits.push({ term, index: idx });
+  }
+
+  hits.sort((a, b) => a.index - b.index);
+  const uniqueTerms = Array.from(new Set(hits.map((h) => h.term)));
+
+  if (uniqueTerms.length === 0) {
+    return { mergeMode: "single", terms: [], explicitMerge };
+  }
+  if (explicitMerge && uniqueTerms.length > 1) {
+    return { mergeMode: "multi", terms: uniqueTerms, explicitMerge };
+  }
+  // Replace-by-default behavior: keep only the latest specific term.
+  return {
+    mergeMode: "single",
+    terms: [hits[hits.length - 1].term],
+    explicitMerge,
+  };
+}
+
 function detectAssistantIntent(query: string): AssistantIntent {
   const q = query.toLowerCase();
   const has = (arr: string[]) => arr.some((x) => q.includes(x));
@@ -144,6 +204,140 @@ function intentMatchScore(place: AssistantPlaceRow, intent: AssistantIntent): nu
   return 1;
 }
 
+function textIntentScore(place: AssistantPlaceRow, term: string): number {
+  const text = `${place.name} ${place.category} ${(place.tags ?? []).join(" ")}`
+    .toLowerCase();
+  const aliases = TERM_SYNONYMS[term] ?? [term];
+  let score = 0;
+  for (const alias of aliases) {
+    if (matchesPhrase(text, alias)) score = Math.max(score, alias.includes(" ") ? 5 : 4);
+  }
+  if (term === "margarita" && (place.category.includes("bar") || place.category.includes("cocktail"))) {
+    score = Math.max(score, 3);
+  }
+  if (
+    ["italian", "punjabi", "indian", "mexican", "japanese", "chinese", "thai", "korean", "mediterranean"].includes(term) &&
+    (place.category.includes("restaurant") || place.category.includes("food") || place.category.includes("cafe"))
+  ) {
+    score += 1;
+  }
+  return score;
+}
+
+function drivingCapKm(): number {
+  const mins = Number.isFinite(ASSISTANT_MAX_DRIVE_MINUTES) && ASSISTANT_MAX_DRIVE_MINUTES > 0
+    ? ASSISTANT_MAX_DRIVE_MINUTES
+    : 30;
+  const speed = Number.isFinite(ASSISTANT_CITY_DRIVE_KMPH) && ASSISTANT_CITY_DRIVE_KMPH > 0
+    ? ASSISTANT_CITY_DRIVE_KMPH
+    : 28;
+  return (mins / 60) * speed;
+}
+
+function applyDrivingCap(rows: AssistantPlaceRow[], userLat: number, userLng: number): AssistantPlaceRow[] {
+  const capKm = drivingCapKm();
+  const strict = rows.filter((p) => haversineKm(userLat, userLng, p.lat, p.lng) <= capKm);
+  if (strict.length >= ASSISTANT_MIN_RESULTS_AFTER_DRIVE_CAP) return strict;
+  const relaxed = rows.filter((p) => haversineKm(userLat, userLng, p.lat, p.lng) <= capKm * 1.4);
+  if (relaxed.length >= ASSISTANT_MIN_RESULTS_AFTER_DRIVE_CAP) return relaxed;
+  // Graceful fallback: still keep nearest-first and local-biased.
+  return rows.slice(0, Math.min(rows.length, 20));
+}
+
+function filterAssistantRowsByIntent(
+  rows: AssistantPlaceRow[],
+  userLat: number,
+  userLng: number,
+  intent: AssistantIntent,
+  spec: QueryIntentSpec
+): AssistantPlaceRow[] {
+  if (rows.length === 0) return [];
+  if (spec.terms.length === 0) {
+    return rankAssistantPlacesByDistanceAndIntent(rows, userLat, userLng, intent);
+  }
+
+  const scored = rows.map((p) => {
+    const termScores = spec.terms.map((term) => textIntentScore(p, term));
+    const matchedTerms = termScores.filter((s) => s > 0).length;
+    const maxTerm = termScores.length ? Math.max(...termScores) : 0;
+    const totalTerm = termScores.reduce((sum, n) => sum + n, 0);
+    const intentScore = intentMatchScore(p, intent);
+    const distKm = haversineKm(userLat, userLng, p.lat, p.lng);
+    return { p, termScores, matchedTerms, maxTerm, totalTerm, intentScore, distKm };
+  });
+
+  if (spec.mergeMode === "single") {
+    const strict = scored
+      .filter((x) => x.maxTerm >= 3)
+      .sort((a, b) => b.maxTerm - a.maxTerm || b.intentScore - a.intentScore || a.distKm - b.distKm)
+      .map((x) => x.p);
+    if (strict.length >= 3) return strict;
+
+    return scored
+      .filter((x) => x.maxTerm > 0 || x.intentScore > 0)
+      .sort((a, b) => b.maxTerm - a.maxTerm || b.intentScore - a.intentScore || a.distKm - b.distKm)
+      .map((x) => x.p);
+  }
+
+  const multi = scored
+    .filter((x) => x.matchedTerms > 0)
+    .sort(
+      (a, b) =>
+        b.matchedTerms - a.matchedTerms ||
+        b.totalTerm - a.totalTerm ||
+        b.intentScore - a.intentScore ||
+        a.distKm - b.distKm
+    )
+    .map((x) => x.p);
+  if (multi.length >= 3) return multi;
+
+  // Preserve strictness for explicit multi-intent asks; never fall back to unrelated cuisine.
+  return scored
+    .filter((x) => x.maxTerm > 0)
+    .sort((a, b) => b.totalTerm - a.totalTerm || b.intentScore - a.intentScore || a.distKm - b.distKm)
+    .map((x) => x.p);
+}
+
+function selectDeterministicRowsForTerms(
+  rows: AssistantPlaceRow[],
+  userLat: number,
+  userLng: number,
+  spec: QueryIntentSpec
+): AssistantPlaceRow[] {
+  if (spec.terms.length === 0) return rows;
+
+  const byId = new Map<string, AssistantPlaceRow>();
+  const sortedByDistance = [...rows].sort(
+    (a, b) => haversineKm(userLat, userLng, a.lat, a.lng) - haversineKm(userLat, userLng, b.lat, b.lng)
+  );
+
+  if (spec.mergeMode === "single") {
+    const target = spec.terms[0];
+    const strict = sortedByDistance
+      .filter((p) => textIntentScore(p, target) >= 3)
+      .sort(
+        (a, b) =>
+          textIntentScore(b, target) - textIntentScore(a, target) ||
+          haversineKm(userLat, userLng, a.lat, a.lng) - haversineKm(userLat, userLng, b.lat, b.lng)
+      );
+    return strict.length > 0 ? strict : sortedByDistance.filter((p) => textIntentScore(p, target) > 0);
+  }
+
+  for (const term of spec.terms) {
+    const termTop = sortedByDistance
+      .filter((p) => textIntentScore(p, term) >= 3)
+      .slice(0, 3);
+    for (const row of termTop) byId.set(row.id, row);
+  }
+  if (byId.size > 0) {
+    return Array.from(byId.values()).sort(
+      (a, b) => haversineKm(userLat, userLng, a.lat, a.lng) - haversineKm(userLat, userLng, b.lat, b.lng)
+    );
+  }
+
+  return sortedByDistance.filter((p) => spec.terms.some((term) => textIntentScore(p, term) > 0));
+}
+
 const FSQ_INTENT_CATS: Record<AssistantIntent, string[]> = {
   grocery:   ["17069", "17088", "17050", "17045"], // grocery store, organic, farmer's market, food market
   chill:     ["13030","13032","13033","16032","16000","12002"],          // cafes, parks, museums
@@ -154,7 +348,12 @@ const FSQ_INTENT_CATS: Record<AssistantIntent, string[]> = {
   general:   ["13030","13032","13065","13003","16032","12000","17045"], // broad mix
 };
 
-async function fetchAssistantPlacesFoursquare(lat: number, lng: number, intent: AssistantIntent): Promise<AssistantPlaceRow[]> {
+async function fetchAssistantPlacesFoursquare(
+  lat: number,
+  lng: number,
+  intent: AssistantIntent,
+  keywordQuery?: string
+): Promise<AssistantPlaceRow[]> {
   const key = process.env.FOURSQUARE_API_KEY?.trim();
   if (!key) return [];
   try {
@@ -163,6 +362,7 @@ async function fetchAssistantPlacesFoursquare(lat: number, lng: number, intent: 
     url.searchParams.set("radius", String(ASSISTANT_FSQ_RADIUS_M));
     url.searchParams.set("limit", "40");
     url.searchParams.set("categories", FSQ_INTENT_CATS[intent].join(","));
+    if (keywordQuery?.trim()) url.searchParams.set("query", keywordQuery.trim());
     url.searchParams.set("open_now", "true");
     url.searchParams.set("fields", "fsq_id,name,categories,geocodes,location");
     const res = await fetch(url.toString(), {
@@ -227,7 +427,12 @@ const GEOAPIFY_INTENT_CATS: Record<AssistantIntent, string[]> = {
   general: ["catering", "entertainment", "leisure.park", "commercial.marketplace"],
 };
 
-async function fetchAssistantPlacesGeoapify(lat: number, lng: number, intent: AssistantIntent): Promise<AssistantPlaceRow[]> {
+async function fetchAssistantPlacesGeoapify(
+  lat: number,
+  lng: number,
+  intent: AssistantIntent,
+  keywordQuery?: string
+): Promise<AssistantPlaceRow[]> {
   const key = process.env.GEOAPIFY_API_KEY?.trim();
   if (!key) return [];
   try {
@@ -236,6 +441,7 @@ async function fetchAssistantPlacesGeoapify(lat: number, lng: number, intent: As
     url.searchParams.set("filter", `circle:${lng},${lat},${ASSISTANT_GEO_RADIUS_M}`);
     url.searchParams.set("bias", `proximity:${lng},${lat}`);
     url.searchParams.set("limit", "40");
+    if (keywordQuery?.trim()) url.searchParams.set("name", keywordQuery.trim());
     url.searchParams.set("conditions", "open_now");
     url.searchParams.set("apiKey", key);
     const res = await fetch(url.toString(), {
@@ -454,6 +660,9 @@ CRITICAL RULES:
 - Give DIFFERENT suggestions each request (vary wording), but NEVER pick a farther place when a closer one in the catalogue fits the same intent.
 - Be specific to the user's exact neighbourhood, not just the city.
 - Match the user's intent precisely (cafe = only cafes, grocery = supermarkets/grocers, nightlife = only bars/clubs).
+- Single-query mode: if user asks one cuisine/topic (e.g. "Italian restaurants"), return only that cuisine/topic.
+- Multi-query mode: only mix categories/cuisines when user explicitly combines them (e.g. "+", "and", "or", commas).
+- Enforce local relevance: prioritize options within ~30 minutes driving distance.
 `.trim();
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -569,14 +778,18 @@ export async function POST(req: NextRequest) {
 
     // ── Fetch nearby places from Foursquare + Geoapify (intent-scoped categories) ──
     const intent = detectAssistantIntent(query);
+    const intentSpec = parseQueryIntentSpec(query);
     const [foursquarePlaces, geoapifyPlaces] = await Promise.all([
       fetchAssistantPlacesFoursquare(lat, lng, intent),
       fetchAssistantPlacesGeoapify(lat, lng, intent),
     ]);
     const merged = dedupePlaces([...foursquarePlaces, ...geoapifyPlaces]);
     const ranked = rankAssistantPlacesByDistanceAndIntent(merged, lat, lng, intent).slice(0, 60);
-    const intentRows = ranked.filter((p) => intentMatchScore(p, intent) > 0);
-    const promptRows = (intentRows.length >= 3 ? intentRows : ranked).slice(0, 40);
+    const driveCapped = applyDrivingCap(ranked, lat, lng);
+    const strictIntentRows = filterAssistantRowsByIntent(driveCapped, lat, lng, intent, intentSpec);
+    const fallbackRows = driveCapped.filter((p) => intentMatchScore(p, intent) > 0);
+    const promptRows = (strictIntentRows.length >= 3 ? strictIntentRows : fallbackRows.length >= 3 ? fallbackRows : driveCapped).slice(0, 40);
+    const deterministicRows = selectDeterministicRowsForTerms(promptRows, lat, lng, intentSpec).slice(0, 6);
 
     const nearbyPlacesCtx = promptRows.map((p) => ({
       id: p.id,
@@ -590,7 +803,7 @@ export async function POST(req: NextRequest) {
 
     // Build the context: coordinates + events + nearby places catalogue
     const discoverEvents = discoverContext?.events ?? [];
-    const hasCatalogue = ranked.length >= 3;
+    const hasCatalogue = promptRows.length >= 3;
     const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const userMessage = [
       `User question: "${query}"`,
@@ -599,6 +812,9 @@ export async function POST(req: NextRequest) {
       `Current User Location: latitude ${lat}, longitude ${lng}`,
       `Language preference: ${lang}`,
       `Intent detected: ${intent}`,
+      `Intent mode: ${intentSpec.mergeMode}`,
+      `Intent terms: ${intentSpec.terms.join(", ") || "(none)"}`,
+      `Driving cap km (approx 30 min): ${drivingCapKm().toFixed(1)}`,
       ``,
       ...(discoverEvents.length > 0 ? [
         `Nearby live events:`,
@@ -618,7 +834,11 @@ export async function POST(req: NextRequest) {
       `RULES:`,
       `- Determine the user's city/neighbourhood from coordinates. Do NOT default to Paris.`,
       `- Match the intent "${intent}" precisely. Only suggest places that fit.`,
+      `- For single-query mode, do NOT mix other cuisines/topics.`,
+      `- Only mix cuisines/topics when user explicitly combines with + / and / or / comma.`,
+      `- If intent terms are present (${intentSpec.terms.join(", ") || "none"}), every selected placeId must match at least one term.`,
       `- Prefer the LOWEST distance_km in the catalogue when several places match — the user asked for nearby.`,
+      `- Keep suggestions within roughly 30 minutes driving when possible.`,
       `- Give DIFFERENT answers each time (this is request ${nonce}).`,
       `- Be specific: use real place names, not generic descriptions.`,
     ].join("\n");
@@ -668,15 +888,24 @@ export async function POST(req: NextRequest) {
       msgText = cleaned.slice(0, 500) || "Here's what I found near you.";
     }
 
+    // Deterministic term matching: for cuisine/drink-specific asks, enforce strict server-side IDs.
+    if (intentSpec.terms.length > 0) {
+      pickedPlaceIds = deterministicRows.map((p) => p.id);
+      geminiSuggestedPlaces = [];
+      if (pickedPlaceIds.length === 0) {
+        msgText = `I couldn't find clear ${intentSpec.terms.join(" + ")} matches within roughly 30 minutes drive. Try another nearby area or broaden the query.`;
+      }
+    }
+
     // ── Hydrate results ─────────────────────────────────────────────────────
     let hydratedPlaces: Record<string, unknown>[] = [];
 
-    if (pickedPlaceIds.length > 0 && ranked.length > 0) {
+    if (pickedPlaceIds.length > 0 && promptRows.length > 0) {
       // Mode A: catalogue-based
-      const placeById = new Map(ranked.map((p) => [p.id, p]));
+      const placeById = new Map(promptRows.map((p) => [p.id, p]));
       // Backfill if Gemini picked too few — closest-first, no random shuffle
       if (pickedPlaceIds.length < 3) {
-        const fallbackBase = intentRows.length >= 3 ? intentRows : ranked;
+        const fallbackBase = strictIntentRows.length >= 3 ? strictIntentRows : promptRows;
         const candidates = rankAssistantPlacesByDistanceAndIntent(fallbackBase, lat, lng, intent)
           .slice(0, 15)
           .map((p) => p.id);
